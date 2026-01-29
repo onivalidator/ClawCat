@@ -1,0 +1,23 @@
+# ClawCat Configuration
+# Copy this file to config.yaml and fill in your values
+
+telegram:
+  # Get your bot token from @BotFather on Telegram
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+
+  # Your Telegram user ID (get it from @userinfobot)
+  # This is the ONLY user who can control the bot
+  authorized_user_id: 123456789
+
+claude:
+  # Path to Claude CLI executable
+  executable: "C:\\Users\\kevin\\.local\\bin\\claude.exe"
+
+  # Working directory for Claude commands
+  working_dir: "C:\\Users\\kevin"
+
+  # Maximum time to wait for a command (in seconds)
+  timeout_seconds: 300
+
+  # Claude model to use
+  model: "sonnet"
