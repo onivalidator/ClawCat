@@ -1,0 +1,23 @@
+# ClawCat Configuration
+# Copy this file to config.yaml and fill in your values
+
+telegram:
+  # Get your bot token from @BotFather on Telegram
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+
+  # Your Telegram user ID (get it from @userinfobot)
+  # This is the ONLY user who can control the bot
+  authorized_user_id: 123456789
+
+agent:
+  # Path to Codex CLI executable
+  executable: "codex"
+
+  # Working directory for Codex commands
+  working_dir: "C:\\ClawCat\\Workspace"
+
+  # Maximum time to wait for a command (in seconds)
+  timeout_seconds: 300
+
+  # Codex model to use
+  model: "gpt-5.1"
