@@ -128,8 +128,8 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
         raise ConfigError("'codex.timeout_seconds' must be a positive integer")
 
-    # Default model
-    model = agent_raw.get("model", "gpt-5.1")
+    # Default model - GPT-5.1 Codex (best quality)
+    model = agent_raw.get("model", "gpt-5.1-codex")
 
     codex_config = AgentConfig(
         executable=executable,

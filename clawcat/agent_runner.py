@@ -6,12 +6,33 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict
 
 from .config import AgentConfig
 
 
 logger = logging.getLogger(__name__)
+
+# Available models - Codex CLI aliases (recommended, auto-map to latest versions)
+# Reference: https://platform.openai.com/en/docs/codex-code
+AVAILABLE_MODELS = ["gpt-5.1-codex", "gpt-5.1", "gpt-5"]
+
+# Full model identifiers (for reference)
+MODEL_IDENTIFIERS = {
+    "gpt-5.1-codex": "gpt-5.1-codex",      # GPT-5.1 Codex - State-of-the-art, complex reasoning
+    "gpt-5.1": "gpt-5.1",  # GPT-5.1 - Daily coding tasks
+    "gpt-5": "gpt-5",    # GPT-5 - Fast and efficient
+}
+
+# Model descriptions for user display
+MODEL_DESCRIPTIONS = {
+    "gpt-5.1-codex": "GPT-5.1 Codex - State-of-the-art software engineering (recommended)",
+    "gpt-5.1": "GPT-5.1 - Fast daily coding tasks",
+    "gpt-5": "GPT-5 - Fastest, high-frequency tasks",
+}
+
+# Default model - GPT-5.1 Codex for best quality
+DEFAULT_MODEL = "gpt-5.1-codex"
 
 
 class RunStatus(Enum):
@@ -30,6 +51,28 @@ class RunResult:
     error: Optional[str] = None
     cost_usd: Optional[float] = None
     duration_seconds: Optional[float] = None
+    session_id: Optional[str] = None
+
+
+@dataclass
+class Session:
+    """Represents a Codex CLI session."""
+    model: str
+    dangerous_mode: bool = False
+    message_count: int = 0
+    # Real session ID from Codex CLI (captured from first response)
+    agent_session_id: Optional[str] = None
+
+    @property
+    def id(self) -> str:
+        """Get a display-friendly session ID.
+
+        Returns the Codex session ID (truncated) if available,
+        otherwise returns 'pending' to indicate no session yet.
+        """
+        if self.agent_session_id:
+            return self.agent_session_id[:8]
+        return "pending"
 
 
 class AgentRunner:
@@ -45,16 +88,37 @@ class AgentRunner:
         self._current_process: Optional[asyncio.subprocess.Process] = None
         self._is_running = False
 
+        # Session management
+        self._active_session: Optional[Session] = None
+        self._current_model = config.model
+
     @property
     def is_running(self) -> bool:
         """Check if a command is currently running."""
         return self._is_running
 
-    def is_available(self) -> bool:
-        """Check if Codex CLI is available.
+    @property
+    def current_model(self) -> str:
+        """Get the current model."""
+        return self._current_model
+
+    @current_model.setter
+    def current_model(self, model: str) -> None:
+        """Set the current model."""
+        if model in AVAILABLE_MODELS:
+            self._current_model = model
+            logger.info(f"Model changed to: {model}")
+
+    @property
+    def active_session(self) -> Optional[Session]:
+        """Get the active session."""
+        return self._active_session
+
+    def get_version(self) -> Optional[str]:
+        """Get Codex CLI version.
 
         Returns:
-            True if codex executable exists and can be run.
+            Version string or None if not available.
         """
         try:
             result = subprocess.run(
@@ -63,16 +127,60 @@ class AgentRunner:
                 text=True,
                 timeout=10
             )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-            logger.warning(f"Codex CLI not available: {e}")
-            return False
+            if result.returncode == 0:
+                return result.stdout.strip()
+            return None
+        except Exception as e:
+            logger.warning(f"Could not get Codex CLI version: {e}")
+            return None
 
-    async def run(self, instruction: str) -> RunResult:
+    def is_available(self) -> bool:
+        """Check if Codex CLI is available.
+
+        Returns:
+            True if codex executable exists and can be run.
+        """
+        return self.get_version() is not None
+
+    def create_session(self, dangerous_mode: bool = False) -> Session:
+        """Create a new session.
+
+        Args:
+            dangerous_mode: If True, skip permission prompts.
+
+        Returns:
+            New Session object.
+        """
+        session = Session(
+            model=self._current_model,
+            dangerous_mode=dangerous_mode
+        )
+        self._active_session = session
+        logger.info(f"Created new session (model={session.model}, dangerous={dangerous_mode})")
+        return session
+
+    def get_session_info(self) -> str:
+        """Get information about the current session state."""
+        session = self.active_session
+        if session:
+            session_id_display = session.agent_session_id[:8] if session.agent_session_id else "pending"
+            model_desc = MODEL_DESCRIPTIONS.get(session.model, session.model)
+            model_id = MODEL_IDENTIFIERS.get(session.model, session.model)
+            return (
+                f"Session ID: {session_id_display}\n"
+                f"Model: {model_desc}\n"
+                f"Model ID: {model_id}\n"
+                f"Messages: {session.message_count}\n"
+                f"Dangerous mode: {'ON' if session.dangerous_mode else 'OFF'}"
+            )
+        return f"No active session. Use /newsession to start one.\nDefault model: {MODEL_DESCRIPTIONS.get(self._current_model, self._current_model)}"
+
+    async def run(self, instruction: str, session: Optional[Session] = None) -> RunResult:
         """Execute an instruction using Codex CLI.
 
         Args:
             instruction: The instruction to send to Codex.
+            session: Optional session to use. If None, uses active session or creates one.
 
         Returns:
             RunResult containing the output or error.
@@ -84,6 +192,12 @@ class AgentRunner:
                 error="Another command is already running. Use /cancel to stop it."
             )
 
+        # Use provided session, active session, or create new one
+        if session is None:
+            session = self.active_session
+            if session is None:
+                session = self.create_session()
+
         self._is_running = True
 
         try:
@@ -92,11 +206,27 @@ class AgentRunner:
                 self.config.executable,
                 "-p",  # Print mode (non-interactive)
                 "--output-format", "json",
-                "--model", self.config.model,
-                instruction
+                "--model", session.model,
             ]
 
-            logger.info(f"Running Codex CLI: {' '.join(cmd[:4])}...")
+            # Add dangerous mode flag if enabled
+            if session.dangerous_mode:
+                cmd.append("--dangerously-skip-permissions")
+
+            # Add resume flag ONLY if we have a real Codex session ID
+            if session.agent_session_id:
+                cmd.extend(["--resume", session.agent_session_id])
+
+            # Add the instruction
+            cmd.append(instruction)
+
+            # Log the full command (redacted)
+            cmd_display = " ".join(cmd[:6]) + f" ... [{len(instruction)} chars]"
+            logger.info(f">>> EXECUTING CLAUDE CLI: {cmd_display}")
+            logger.info(f">>> Working directory: {self.config.working_dir}")
+            logger.info(f">>> Model: {session.model}, Dangerous: {session.dangerous_mode}")
+            if session.agent_session_id:
+                logger.info(f">>> Resuming session: {session.agent_session_id}")
 
             # Start the subprocess
             self._current_process = await asyncio.create_subprocess_exec(
@@ -105,6 +235,8 @@ class AgentRunner:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.config.working_dir
             )
+
+            logger.info(f">>> Process started with PID: {self._current_process.pid}")
 
             try:
                 # Wait for completion with timeout
@@ -116,29 +248,40 @@ class AgentRunner:
                 stdout_text = stdout.decode("utf-8", errors="replace")
                 stderr_text = stderr.decode("utf-8", errors="replace")
 
+                logger.info(f">>> Process completed with return code: {self._current_process.returncode}")
+                logger.info(f">>> stdout length: {len(stdout_text)}, stderr length: {len(stderr_text)}")
+
+                # Update session message count
+                session.message_count += 1
+
                 # Check if process was cancelled
                 if self._current_process.returncode == -15 or self._current_process.returncode == 1:
                     if "cancelled" in stderr_text.lower():
                         return RunResult(
                             status=RunStatus.CANCELLED,
                             output="",
-                            error="Task was cancelled."
+                            error="Task was cancelled.",
+                            session_id=session.agent_session_id
                         )
 
-                # Try to parse JSON output
-                return self._parse_output(stdout_text, stderr_text, self._current_process.returncode)
+                # Try to parse JSON output and capture session ID
+                result = self._parse_output(stdout_text, stderr_text, self._current_process.returncode, session)
+                return result
 
             except asyncio.TimeoutError:
                 # Kill the process on timeout
+                logger.warning(f">>> Process timed out after {self.config.timeout_seconds}s, killing...")
                 self._current_process.kill()
                 await self._current_process.wait()
                 return RunResult(
                     status=RunStatus.TIMEOUT,
                     output="",
-                    error=f"Command timed out after {self.config.timeout_seconds} seconds."
+                    error=f"Command timed out after {self.config.timeout_seconds} seconds.",
+                    session_id=session.agent_session_id
                 )
 
         except FileNotFoundError:
+            logger.error(f"Codex CLI not found at: {self.config.executable}")
             return RunResult(
                 status=RunStatus.ERROR,
                 output="",
@@ -155,13 +298,14 @@ class AgentRunner:
             self._current_process = None
             self._is_running = False
 
-    def _parse_output(self, stdout: str, stderr: str, returncode: int) -> RunResult:
+    def _parse_output(self, stdout: str, stderr: str, returncode: int, session: Session) -> RunResult:
         """Parse Codex CLI output.
 
         Args:
             stdout: Standard output from the process.
             stderr: Standard error from the process.
             returncode: Process return code.
+            session: Session to update with captured session ID.
 
         Returns:
             Parsed RunResult.
@@ -171,39 +315,61 @@ class AgentRunner:
             data = json.loads(stdout)
 
             # Extract result from JSON response
+            # Field names per Codex CLI --output-format json:
+            # - result: the response text
+            # - session_id: unique session identifier
+            # - total_cost_usd: total cost in USD
+            # - duration_ms: duration in milliseconds
             result_text = data.get("result", "")
-            cost = data.get("cost_usd")
-            duration = data.get("duration_seconds")
+            cost = data.get("total_cost_usd")  # Note: field is total_cost_usd
+            duration_ms = data.get("duration_ms")
+            duration = duration_ms / 1000.0 if duration_ms else None  # Convert to seconds
 
-            if returncode != 0:
+            # Capture the real session ID from Codex CLI
+            agent_session_id = data.get("session_id")
+            if agent_session_id and not session.agent_session_id:
+                session.agent_session_id = agent_session_id
+                logger.info(f">>> Captured Codex session ID: {agent_session_id}")
+
+            # Log parsed data
+            logger.info(f">>> Parsed JSON response - cost: ${cost}, duration: {duration}s")
+
+            # Check for errors - use is_error field from JSON if available
+            is_error = data.get("is_error", False) or returncode != 0
+            if is_error:
                 error_msg = data.get("error") or stderr or f"Process exited with code {returncode}"
                 return RunResult(
                     status=RunStatus.ERROR,
                     output=result_text,
                     error=error_msg,
                     cost_usd=cost,
-                    duration_seconds=duration
+                    duration_seconds=duration,
+                    session_id=session.agent_session_id
                 )
 
             return RunResult(
                 status=RunStatus.SUCCESS,
                 output=result_text,
                 cost_usd=cost,
-                duration_seconds=duration
+                duration_seconds=duration,
+                session_id=session.agent_session_id
             )
 
         except json.JSONDecodeError:
             # Not JSON, use raw output
+            logger.warning(f">>> Could not parse as JSON, using raw output")
             if returncode != 0:
                 return RunResult(
                     status=RunStatus.ERROR,
                     output=stdout,
-                    error=stderr or f"Process exited with code {returncode}"
+                    error=stderr or f"Process exited with code {returncode}",
+                    session_id=session.agent_session_id
                 )
 
             return RunResult(
                 status=RunStatus.SUCCESS,
-                output=stdout.strip()
+                output=stdout.strip(),
+                session_id=session.agent_session_id
             )
 
     async def cancel(self) -> bool:
@@ -214,6 +380,7 @@ class AgentRunner:
         """
         if self._current_process is not None and self._is_running:
             try:
+                logger.info(f">>> Cancelling process {self._current_process.pid}")
                 self._current_process.terminate()
                 # Give it a moment to terminate gracefully
                 await asyncio.sleep(0.5)

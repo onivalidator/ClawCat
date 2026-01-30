@@ -3,17 +3,18 @@
 import logging
 from typing import Optional
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
 
 from .config import Config
-from .agent_runner import AgentRunner, RunStatus
+from .agent_runner import AgentRunner, RunStatus, AVAILABLE_MODELS, MODEL_DESCRIPTIONS, MODEL_IDENTIFIERS
 
 
 logger = logging.getLogger(__name__)
@@ -69,13 +70,18 @@ class ClawCatBot:
         if not await self._check_auth(update):
             return
 
+        version = self.runner.get_version() or "Unknown"
+
         await update.message.reply_text(
-            "Welcome to ClawCat!\n\n"
-            "I'm your remote interface to Codex.\n\n"
-            "Commands:\n"
-            "/status - Check if Codex is available\n"
-            "/cancel - Cancel running task\n\n"
-            "Just send me any message and I'll pass it to Codex."
+            f"Welcome to ClawCat!\n\n"
+            f"Remote interface to Codex CLI.\n"
+            f"CLI Version: {version}\n\n"
+            f"Commands:\n"
+            f"/status - Check status and session info\n"
+            f"/model - Select AI model\n"
+            f"/newsession - Start new session\n"
+            f"/cancel - Cancel running task\n\n"
+            f"Send any message to execute via Codex CLI."
         )
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -83,26 +89,117 @@ class ClawCatBot:
         if not await self._check_auth(update):
             return
 
-        is_available = self.runner.is_available()
+        version = self.runner.get_version()
         is_running = self.runner.is_running
 
         status_parts = []
 
-        if is_available:
-            status_parts.append("Codex CLI: Available")
+        if version:
+            status_parts.append(f"Codex CLI: {version}")
         else:
             status_parts.append("Codex CLI: NOT AVAILABLE")
 
-        if is_running:
-            status_parts.append("Current task: Running")
-        else:
-            status_parts.append("Current task: None")
-
         status_parts.append(f"Working directory: {self.config.agent.working_dir}")
-        status_parts.append(f"Model: {self.config.agent.model}")
         status_parts.append(f"Timeout: {self.config.agent.timeout_seconds}s")
+        status_parts.append("")
+
+        # Session info
+        session_info = self.runner.get_session_info()
+        status_parts.append(session_info)
+
+        if is_running:
+            status_parts.append("\n[Task currently running]")
 
         await update.message.reply_text("\n".join(status_parts))
+
+    async def cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /model command - show model selection."""
+        if not await self._check_auth(update):
+            return
+
+        current = self.runner.current_model
+        session = self.runner.active_session
+
+        # Build inline keyboard with model descriptions
+        buttons = []
+        for model in AVAILABLE_MODELS:
+            desc = MODEL_DESCRIPTIONS.get(model, model)
+            if model == current:
+                label = f"* {desc}"
+            else:
+                label = desc
+            buttons.append([InlineKeyboardButton(label, callback_data=f"model:{model}")])
+
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        session_note = ""
+        if session:
+            session_note = f"\n\nNote: Current session uses {session.model}. New model applies to new sessions."
+
+        await update.message.reply_text(
+            f"Select model:{session_note}",
+            reply_markup=keyboard
+        )
+
+    async def cmd_newsession(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /newsession command - start a new session."""
+        if not await self._check_auth(update):
+            return
+
+        # Build inline keyboard for session options
+        buttons = [
+            [InlineKeyboardButton("Normal session", callback_data="session:normal")],
+            [InlineKeyboardButton("Dangerous mode (skip permissions)", callback_data="session:dangerous")],
+        ]
+        keyboard = InlineKeyboardMarkup(buttons)
+
+        await update.message.reply_text(
+            f"Start new session with model: {self.runner.current_model}\n\n"
+            f"Choose mode:",
+            reply_markup=keyboard
+        )
+
+    async def callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle callback queries from inline keyboards."""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        if not self._is_authorized(user_id):
+            await query.edit_message_text("Unauthorized.")
+            return
+
+        data = query.data
+
+        if data.startswith("model:"):
+            # Model selection
+            model = data.split(":")[1]
+            if model in AVAILABLE_MODELS:
+                self.runner.current_model = model
+                desc = MODEL_DESCRIPTIONS.get(model, model)
+                model_id = MODEL_IDENTIFIERS.get(model, model)
+                await query.edit_message_text(
+                    f"Model set to: {desc}\n"
+                    f"Identifier: {model_id}"
+                )
+            else:
+                await query.edit_message_text(f"Unknown model: {model}")
+
+        elif data.startswith("session:"):
+            # New session
+            mode = data.split(":")[1]
+            dangerous = (mode == "dangerous")
+
+            session = self.runner.create_session(dangerous_mode=dangerous)
+
+            mode_str = "DANGEROUS MODE" if dangerous else "normal mode"
+            await query.edit_message_text(
+                f"New session created!\n\n"
+                f"Session ID: {session.id}\n"
+                f"Model: {session.model}\n"
+                f"Mode: {mode_str}\n\n"
+                f"Send a message to start."
+            )
 
     async def cmd_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /cancel command."""
@@ -127,8 +224,14 @@ class ClawCatBot:
             await update.message.reply_text("Please send an instruction for Codex.")
             return
 
-        # Send "working" indicator
-        working_msg = await update.message.reply_text("Working...")
+        # Send "working" indicator with session info
+        session = self.runner.active_session
+        if session:
+            working_text = f"Working... [Session: {session.id}, Model: {session.model}]"
+        else:
+            working_text = f"Working... [New session, Model: {self.runner.current_model}]"
+
+        working_msg = await update.message.reply_text(working_text)
 
         try:
             # Run the instruction
@@ -176,9 +279,17 @@ class ClawCatBot:
         if result.error and result.output:
             parts.append(f"\nError: {result.error}")
 
-        # Cost info (if available)
+        # Footer with metadata
+        footer_parts = []
+        if result.session_id:
+            footer_parts.append(f"Session: {result.session_id}")
         if result.cost_usd is not None:
-            parts.append(f"\n[Cost: ${result.cost_usd:.4f}]")
+            footer_parts.append(f"Cost: ${result.cost_usd:.4f}")
+        if result.duration_seconds is not None:
+            footer_parts.append(f"Time: {result.duration_seconds:.1f}s")
+
+        if footer_parts:
+            parts.append(f"\n[{' | '.join(footer_parts)}]")
 
         message = "\n".join(parts)
 
@@ -237,7 +348,10 @@ class ClawCatBot:
         # Add handlers
         self.application.add_handler(CommandHandler("start", self.cmd_start))
         self.application.add_handler(CommandHandler("status", self.cmd_status))
+        self.application.add_handler(CommandHandler("model", self.cmd_model))
+        self.application.add_handler(CommandHandler("newsession", self.cmd_newsession))
         self.application.add_handler(CommandHandler("cancel", self.cmd_cancel))
+        self.application.add_handler(CallbackQueryHandler(self.callback_handler))
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )

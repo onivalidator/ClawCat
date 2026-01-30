@@ -11,6 +11,9 @@ Control Codex on your Windows machine from anywhere via Telegram.
 - Cancel running tasks
 - Run as Windows service for always-on operation
 - Single-user security model
+- Model selection (GPT-5.1 Codex, GPT-5.1, GPT-5)
+- Session management with conversation continuity
+- Dangerous mode for unrestricted execution
 
 ## Setup
 
@@ -49,7 +52,7 @@ agent:
   executable: "codex"
   working_dir: "C:\\ClawCat\\Workspace"
   timeout_seconds: 300
-  model: "gpt-5.1"
+  model: "gpt-5.1-codex"  # gpt-5.1-codex (default), gpt-5.1, or gpt-5
 ```
 
 ### 5. Test in Console Mode
@@ -65,8 +68,18 @@ Send `/start` to your bot in Telegram to verify it works.
 ### Bot Commands
 
 - `/start` - Welcome message and help
-- `/status` - Check Codex CLI availability
+- `/status` - Check Codex CLI availability and session info
+- `/model` - Select AI model (GPT-5.1 Codex, GPT-5.1, GPT-5)
+- `/newsession` - Start a new session (normal or dangerous mode)
 - `/cancel` - Cancel a running task
+
+### Available Models
+
+| Model | Description |
+|-------|-------------|
+| `gpt-5.1-codex` | **GPT-5.1 Codex** (gpt-5.1-codex) - State-of-the-art software engineering (default) |
+| `gpt-5.1` | **GPT-5.1** (gpt-5.1) - Fast daily coding tasks |
+| `gpt-5` | **GPT-5** (gpt-5) - Fastest, high-frequency tasks |
 
 ### Sending Instructions
 

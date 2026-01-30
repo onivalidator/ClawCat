@@ -1,5 +1,6 @@
 """Windows service wrapper for ClawCat."""
 
+import asyncio
 import logging
 import os
 import sys
@@ -61,7 +62,13 @@ class ClawCatService(win32serviceutil.ServiceFramework):
         # Stop the bot if running
         if self.bot and self.bot.application:
             try:
-                self.bot.application.stop()
+                # application.stop() is async, need to run it properly
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self.bot.application.stop())
+                finally:
+                    loop.close()
             except Exception as e:
                 logging.error(f"Error stopping bot: {e}")
 
