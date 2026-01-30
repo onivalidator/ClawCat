@@ -1,5 +1,6 @@
 """Telegram bot handler for ClawCat."""
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -496,7 +497,33 @@ class ClawCatBot:
         return self.application
 
     def run(self) -> None:
-        """Run the bot (blocking)."""
+        """Run the bot (blocking). For console mode."""
         app = self.build_application()
         logger.info("Starting ClawCat bot...")
         app.run_polling(drop_pending_updates=True)
+
+    async def run_async(self, stop_event=None) -> None:
+        """Run the bot asynchronously. For service mode.
+
+        Args:
+            stop_event: Optional asyncio.Event to signal shutdown.
+        """
+        app = self.build_application()
+        logger.info("Starting ClawCat bot (async mode)...")
+
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+
+        try:
+            if stop_event:
+                await stop_event.wait()
+            else:
+                # Run forever if no stop event
+                while True:
+                    await asyncio.sleep(1)
+        finally:
+            logger.info("Stopping ClawCat bot...")
+            await app.updater.stop()
+            await app.stop()
+            await app.shutdown()

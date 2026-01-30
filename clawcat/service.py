@@ -51,28 +51,21 @@ class ClawCatService(win32serviceutil.ServiceFramework):
     def __init__(self, args):
         """Initialize the service."""
         win32serviceutil.ServiceFramework.__init__(self, args)
-        self.stop_event = win32event.CreateEvent(None, 0, 0, None)
+        self.win32_stop_event = win32event.CreateEvent(None, 0, 0, None)
         self.bot = None
+        self.loop = None
+        self.async_stop_event = None
 
     def SvcStop(self):
         """Handle service stop request."""
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        win32event.SetEvent(self.stop_event)
-
-        # Stop the bot if running
-        if self.bot and self.bot.application:
-            try:
-                # application.stop() is async, need to run it properly
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(self.bot.application.stop())
-                finally:
-                    loop.close()
-            except Exception as e:
-                logging.error(f"Error stopping bot: {e}")
-
         logging.info("Service stop requested")
+
+        # Signal the asyncio stop event
+        if self.loop and self.async_stop_event:
+            self.loop.call_soon_threadsafe(self.async_stop_event.set)
+
+        win32event.SetEvent(self.win32_stop_event)
 
     def SvcDoRun(self):
         """Main service entry point."""
@@ -84,12 +77,20 @@ class ClawCatService(win32serviceutil.ServiceFramework):
             config = load_config()
             logging.info("Configuration loaded successfully")
 
-            # Create and run bot
+            # Create bot
             self.bot = ClawCatBot(config)
             logging.info("Starting Telegram bot...")
 
-            # Run the bot (this blocks until stopped)
-            self.bot.run()
+            # Create event loop for this thread
+            # Use SelectorEventLoop to avoid signal.set_wakeup_fd issue in non-main threads
+            self.loop = asyncio.SelectorEventLoop()
+            asyncio.set_event_loop(self.loop)
+
+            # Create async stop event
+            self.async_stop_event = asyncio.Event()
+
+            # Run the bot using the async method
+            self.loop.run_until_complete(self.bot.run_async(self.async_stop_event))
 
         except ConfigError as e:
             logging.error(f"Configuration error: {e}")
@@ -97,6 +98,9 @@ class ClawCatService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.exception("Service error")
             servicemanager.LogErrorMsg(f"ClawCat error: {e}")
+        finally:
+            if self.loop:
+                self.loop.close()
 
         logging.info("ClawCat service stopped")
 
