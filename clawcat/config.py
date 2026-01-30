@@ -128,8 +128,8 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
         raise ConfigError("'claude.timeout_seconds' must be a positive integer")
 
-    # Default model
-    model = claude_raw.get("model", "sonnet")
+    # Default model - Opus 4.5 (best quality)
+    model = claude_raw.get("model", "opus")
 
     claude_config = ClaudeConfig(
         executable=executable,

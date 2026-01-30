@@ -11,6 +11,9 @@ Control Claude Code on your Windows machine from anywhere via Telegram.
 - Cancel running tasks
 - Run as Windows service for always-on operation
 - Single-user security model
+- Model selection (Opus 4.5, Sonnet 4.5, Haiku 4.5)
+- Session management with conversation continuity
+- Dangerous mode for unrestricted execution
 
 ## Setup
 
@@ -49,7 +52,7 @@ claude:
   executable: "C:\\Users\\kevin\\.local\\bin\\claude.exe"
   working_dir: "C:\\Users\\kevin"
   timeout_seconds: 300
-  model: "sonnet"
+  model: "opus"  # opus (default), sonnet, or haiku
 ```
 
 ### 5. Test in Console Mode
@@ -65,8 +68,18 @@ Send `/start` to your bot in Telegram to verify it works.
 ### Bot Commands
 
 - `/start` - Welcome message and help
-- `/status` - Check Claude CLI availability
+- `/status` - Check Claude CLI availability and session info
+- `/model` - Select AI model (Opus 4.5, Sonnet 4.5, Haiku 4.5)
+- `/newsession` - Start a new session (normal or dangerous mode)
 - `/cancel` - Cancel a running task
+
+### Available Models
+
+| Model | Description |
+|-------|-------------|
+| `opus` | **Opus 4.5** (claude-opus-4-5-20251101) - State-of-the-art software engineering (default) |
+| `sonnet` | **Sonnet 4.5** (claude-sonnet-4-5-20250929) - Fast daily coding tasks |
+| `haiku` | **Haiku 4.5** (claude-haiku-4-5-20251001) - Fastest, high-frequency tasks |
 
 ### Sending Instructions
 

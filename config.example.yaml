@@ -19,5 +19,9 @@ claude:
   # Maximum time to wait for a command (in seconds)
   timeout_seconds: 300
 
-  # Claude model to use
-  model: "sonnet"
+  # Claude model to use - aliases auto-map to latest versions
+  # Available models:
+  #   opus   - Opus 4.5 (claude-opus-4-5-20251101) - State-of-the-art, recommended
+  #   sonnet - Sonnet 4.5 (claude-sonnet-4-5-20250929) - Fast daily coding
+  #   haiku  - Haiku 4.5 (claude-haiku-4-5-20251001) - Fastest, simple tasks
+  model: "opus"
