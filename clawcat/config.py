@@ -22,6 +22,7 @@ class ClaudeConfig:
     working_dir: str
     timeout_seconds: int
     model: str
+    open_monitor_window: bool = True
 
 
 @dataclass
@@ -131,11 +132,17 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     # Default model - Opus 4.5 (best quality)
     model = claude_raw.get("model", "opus")
 
+    # Monitor window option (default True)
+    open_monitor_window = claude_raw.get("open_monitor_window", True)
+    if not isinstance(open_monitor_window, bool):
+        raise ConfigError("'claude.open_monitor_window' must be a boolean")
+
     claude_config = ClaudeConfig(
         executable=executable,
         working_dir=working_dir,
         timeout_seconds=timeout_seconds,
-        model=model
+        model=model,
+        open_monitor_window=open_monitor_window
     )
 
     return Config(telegram=telegram_config, claude=claude_config)

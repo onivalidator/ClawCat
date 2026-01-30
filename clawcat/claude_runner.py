@@ -4,11 +4,15 @@ import asyncio
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+import sys
+import time
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Dict
+from pathlib import Path
+from typing import Optional, Dict, List, Any
 
 from .config import ClaudeConfig
+from .session_store import SessionStore
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +66,10 @@ class Session:
     message_count: int = 0
     # Real session ID from Claude CLI (captured from first response)
     claude_session_id: Optional[str] = None
+    # User-defined nickname for the session
+    nickname: Optional[str] = None
+    # Timestamp when session was created
+    created_at: Optional[float] = field(default_factory=time.time)
 
     @property
     def id(self) -> str:
@@ -73,6 +81,16 @@ class Session:
         if self.claude_session_id:
             return self.claude_session_id[:8]
         return "pending"
+
+    @property
+    def display_name(self) -> str:
+        """Get a user-friendly display name for the session.
+
+        Returns nickname if set, otherwise truncated session ID.
+        """
+        if self.nickname:
+            return self.nickname
+        return self.id
 
 
 class ClaudeRunner:
@@ -91,6 +109,10 @@ class ClaudeRunner:
         # Session management
         self._active_session: Optional[Session] = None
         self._current_model = config.model
+
+        # Session persistence
+        storage_dir = Path(config.working_dir) / "ClawCat_sessions"
+        self._session_store = SessionStore(storage_dir)
 
     @property
     def is_running(self) -> bool:
@@ -142,11 +164,12 @@ class ClaudeRunner:
         """
         return self.get_version() is not None
 
-    def create_session(self, dangerous_mode: bool = False) -> Session:
+    def create_session(self, dangerous_mode: bool = False, open_monitor: bool = True) -> Session:
         """Create a new session.
 
         Args:
             dangerous_mode: If True, skip permission prompts.
+            open_monitor: If True and configured, open a monitor window.
 
         Returns:
             New Session object.
@@ -157,7 +180,65 @@ class ClaudeRunner:
         )
         self._active_session = session
         logger.info(f"Created new session (model={session.model}, dangerous={dangerous_mode})")
+
+        # Open monitor window if configured
+        if open_monitor and self.config.open_monitor_window:
+            self._open_monitor_window(session)
+
         return session
+
+    def _get_activity_log_path(self) -> Path:
+        """Get path to the activity log file."""
+        return Path(self.config.working_dir) / "ClawCat_sessions" / "activity.log"
+
+    def _open_monitor_window(self, session: Session) -> None:
+        """Open a monitor window for the session.
+
+        Args:
+            session: The session to monitor.
+        """
+        try:
+            monitor_script = Path(__file__).parent / "session_monitor.py"
+            log_file = self._get_activity_log_path()
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+
+            session_name = session.nickname or "New Session"
+            session_id = session.claude_session_id or "pending"
+
+            # Write initial log entry
+            self._log_activity(f"Session started: {session_name} (model={session.model})")
+
+            # Launch monitor as detached process (Windows-specific flags)
+            CREATE_NEW_CONSOLE = 0x00000010
+            DETACHED_PROCESS = 0x00000008
+
+            subprocess.Popen(
+                [sys.executable, str(monitor_script), session_id, session_name, str(log_file)],
+                creationflags=CREATE_NEW_CONSOLE | DETACHED_PROCESS,
+                close_fds=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info(f"Monitor window launched for session: {session_name}")
+
+        except Exception as e:
+            logger.warning(f"Could not open monitor window: {e}")
+
+    def _log_activity(self, message: str) -> None:
+        """Log activity to the session activity log file.
+
+        Args:
+            message: Message to log.
+        """
+        try:
+            log_file = self._get_activity_log_path()
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] {message}\n")
+        except Exception as e:
+            logger.warning(f"Could not write to activity log: {e}")
 
     def get_session_info(self) -> str:
         """Get information about the current session state."""
@@ -166,14 +247,75 @@ class ClaudeRunner:
             session_id_display = session.claude_session_id[:8] if session.claude_session_id else "pending"
             model_desc = MODEL_DESCRIPTIONS.get(session.model, session.model)
             model_id = MODEL_IDENTIFIERS.get(session.model, session.model)
+            nickname_line = f"Nickname: {session.nickname}\n" if session.nickname else ""
             return (
                 f"Session ID: {session_id_display}\n"
+                f"{nickname_line}"
                 f"Model: {model_desc}\n"
                 f"Model ID: {model_id}\n"
                 f"Messages: {session.message_count}\n"
                 f"Dangerous mode: {'ON' if session.dangerous_mode else 'OFF'}"
             )
         return f"No active session. Use /newsession to start one.\nDefault model: {MODEL_DESCRIPTIONS.get(self._current_model, self._current_model)}"
+
+    def pause_session(self) -> Optional[Session]:
+        """Pause and save the current session to disk.
+
+        Returns:
+            The paused session, or None if no session to pause.
+        """
+        session = self._active_session
+        if session and session.claude_session_id:
+            if self._session_store.save_session(session):
+                paused = session
+                self._active_session = None
+                logger.info(f"Session paused: {session.display_name}")
+                return paused
+        return None
+
+    def resume_session(self, session_id: str) -> Optional[Session]:
+        """Resume a saved session from disk.
+
+        Args:
+            session_id: Full session ID to resume.
+
+        Returns:
+            The resumed Session, or None if not found.
+        """
+        data = self._session_store.load_session_data(session_id)
+        if not data:
+            return None
+
+        session = Session(
+            model=data["model"],
+            dangerous_mode=data.get("dangerous_mode", False),
+            message_count=data.get("message_count", 0),
+            claude_session_id=data["claude_session_id"],
+            nickname=data.get("nickname"),
+            created_at=data.get("created_at"),
+        )
+        self._active_session = session
+        logger.info(f"Session resumed: {session.display_name}")
+        return session
+
+    def list_saved_sessions(self) -> List[Dict[str, Any]]:
+        """List all saved sessions.
+
+        Returns:
+            List of session metadata dicts.
+        """
+        return self._session_store.list_sessions()
+
+    def find_saved_session(self, identifier: str) -> Optional[Dict[str, Any]]:
+        """Find a saved session by nickname or ID.
+
+        Args:
+            identifier: Nickname or session ID prefix.
+
+        Returns:
+            Session metadata dict, or None if not found.
+        """
+        return self._session_store.find_session(identifier)
 
     async def run(self, instruction: str, session: Optional[Session] = None) -> RunResult:
         """Execute an instruction using Claude CLI.
@@ -228,6 +370,10 @@ class ClaudeRunner:
             if session.claude_session_id:
                 logger.info(f">>> Resuming session: {session.claude_session_id}")
 
+            # Log to activity file for monitor window
+            instruction_preview = instruction[:100] + "..." if len(instruction) > 100 else instruction
+            self._log_activity(f"Instruction: {instruction_preview}")
+
             # Start the subprocess
             self._current_process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -266,6 +412,14 @@ class ClaudeRunner:
 
                 # Try to parse JSON output and capture session ID
                 result = self._parse_output(stdout_text, stderr_text, self._current_process.returncode, session)
+
+                # Log result to activity file
+                status_str = result.status.value.upper()
+                output_preview = result.output[:200] + "..." if len(result.output) > 200 else result.output
+                cost_str = f"${result.cost_usd:.4f}" if result.cost_usd else "N/A"
+                self._log_activity(f"Result [{status_str}]: {output_preview}")
+                self._log_activity(f"Cost: {cost_str}, Messages: {session.message_count}")
+
                 return result
 
             except asyncio.TimeoutError:

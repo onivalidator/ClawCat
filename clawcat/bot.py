@@ -65,6 +65,20 @@ class ClawCatBot:
             return False
         return True
 
+    # Command descriptions - update this when adding/changing commands
+    COMMANDS = {
+        "start": "Welcome message and quick help",
+        "commands": "List all commands with descriptions",
+        "status": "Check CLI status and current session info",
+        "model": "Select AI model (opus/sonnet/haiku)",
+        "newsession": "Start a new Claude session",
+        "nickname <name>": "Set a nickname for current session",
+        "pause": "Save current session to disk",
+        "listsessions": "Show all saved sessions",
+        "loadsession <name>": "Resume a saved session by name or ID",
+        "cancel": "Cancel the currently running task",
+    }
+
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
         if not await self._check_auth(update):
@@ -76,13 +90,20 @@ class ClawCatBot:
             f"Welcome to ClawCat!\n\n"
             f"Remote interface to Claude Code CLI.\n"
             f"CLI Version: {version}\n\n"
-            f"Commands:\n"
-            f"/status - Check status and session info\n"
-            f"/model - Select AI model\n"
-            f"/newsession - Start new session\n"
-            f"/cancel - Cancel running task\n\n"
+            f"Use /commands to see all available commands.\n\n"
             f"Send any message to execute via Claude CLI."
         )
+
+    async def cmd_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /commands command - list all commands."""
+        if not await self._check_auth(update):
+            return
+
+        lines = ["Available Commands:", ""]
+        for cmd, desc in self.COMMANDS.items():
+            lines.append(f"  /{cmd} - {desc}")
+
+        await update.message.reply_text("\n".join(lines))
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /status command."""
@@ -213,6 +234,117 @@ class ClawCatBot:
         else:
             await update.message.reply_text("No task is currently running.")
 
+    async def cmd_nickname(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /nickname command - set a name for the current session."""
+        if not await self._check_auth(update):
+            return
+
+        session = self.runner.active_session
+        if not session:
+            await update.message.reply_text(
+                "No active session. Start one with /newsession first."
+            )
+            return
+
+        # Get nickname from command args
+        if context.args:
+            nickname = " ".join(context.args)
+            session.nickname = nickname
+            await update.message.reply_text(f"Session nicknamed: {nickname}")
+        else:
+            current = session.nickname or "(none)"
+            await update.message.reply_text(
+                f"Current nickname: {current}\n\n"
+                f"Usage: /nickname <name>"
+            )
+
+    async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /pause command - save current session to disk."""
+        if not await self._check_auth(update):
+            return
+
+        session = self.runner.pause_session()
+        if session:
+            name = session.display_name
+            await update.message.reply_text(
+                f"Session paused and saved: {name}\n"
+                f"Model: {session.model}\n"
+                f"Messages: {session.message_count}\n\n"
+                f"Use /listsessions to see saved sessions."
+            )
+        else:
+            await update.message.reply_text(
+                "No active session to pause, or session has no ID yet.\n"
+                "Send at least one message to establish a session ID."
+            )
+
+    async def cmd_listsessions(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /listsessions command - show all saved sessions."""
+        if not await self._check_auth(update):
+            return
+
+        sessions = self.runner.list_saved_sessions()
+
+        if not sessions:
+            await update.message.reply_text(
+                "No saved sessions.\n"
+                "Use /pause to save the current session."
+            )
+            return
+
+        lines = ["Saved Sessions:", ""]
+        for s in sessions[:10]:  # Limit to 10
+            name = s.get("nickname") or s["id"]
+            model = s["model"]
+            msgs = s["messages"]
+            dangerous = " [DANGEROUS]" if s.get("dangerous_mode") else ""
+            lines.append(f"  {name} ({model}, {msgs} msgs){dangerous}")
+
+        if len(sessions) > 10:
+            lines.append(f"\n  ... and {len(sessions) - 10} more")
+
+        lines.append("")
+        lines.append("Use /loadsession <name or id> to resume.")
+
+        await update.message.reply_text("\n".join(lines))
+
+    async def cmd_loadsession(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /loadsession command - resume a saved session."""
+        if not await self._check_auth(update):
+            return
+
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: /loadsession <session name or id>\n\n"
+                "Use /listsessions to see available sessions."
+            )
+            return
+
+        identifier = " ".join(context.args)
+
+        # Find matching session
+        match = self.runner.find_saved_session(identifier)
+
+        if not match:
+            await update.message.reply_text(
+                f"Session not found: {identifier}\n\n"
+                f"Use /listsessions to see available sessions."
+            )
+            return
+
+        session = self.runner.resume_session(match["full_id"])
+        if session:
+            name = session.display_name
+            await update.message.reply_text(
+                f"Session resumed: {name}\n"
+                f"Session ID: {session.id}\n"
+                f"Model: {session.model}\n"
+                f"Messages: {session.message_count}\n"
+                f"Dangerous mode: {'ON' if session.dangerous_mode else 'OFF'}"
+            )
+        else:
+            await update.message.reply_text("Failed to load session.")
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle regular text messages as Claude instructions."""
         if not await self._check_auth(update):
@@ -284,7 +416,7 @@ class ClawCatBot:
         if result.session_id:
             footer_parts.append(f"Session: {result.session_id}")
         if result.cost_usd is not None:
-            footer_parts.append(f"Cost: ${result.cost_usd:.4f}")
+            footer_parts.append(f"Estimated API Cost: ${result.cost_usd:.4f}")
         if result.duration_seconds is not None:
             footer_parts.append(f"Time: {result.duration_seconds:.1f}s")
 
@@ -347,10 +479,15 @@ class ClawCatBot:
 
         # Add handlers
         self.application.add_handler(CommandHandler("start", self.cmd_start))
+        self.application.add_handler(CommandHandler("commands", self.cmd_commands))
         self.application.add_handler(CommandHandler("status", self.cmd_status))
         self.application.add_handler(CommandHandler("model", self.cmd_model))
         self.application.add_handler(CommandHandler("newsession", self.cmd_newsession))
         self.application.add_handler(CommandHandler("cancel", self.cmd_cancel))
+        self.application.add_handler(CommandHandler("nickname", self.cmd_nickname))
+        self.application.add_handler(CommandHandler("pause", self.cmd_pause))
+        self.application.add_handler(CommandHandler("listsessions", self.cmd_listsessions))
+        self.application.add_handler(CommandHandler("loadsession", self.cmd_loadsession))
         self.application.add_handler(CallbackQueryHandler(self.callback_handler))
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)

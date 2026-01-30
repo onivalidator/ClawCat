@@ -25,3 +25,7 @@ claude:
   #   sonnet - Sonnet 4.5 (claude-sonnet-4-5-20250929) - Fast daily coding
   #   haiku  - Haiku 4.5 (claude-haiku-4-5-20251001) - Fastest, simple tasks
   model: "opus"
+
+  # Open a monitor window on the desktop when a new session starts
+  # Set to false to disable (useful when running as a service)
+  open_monitor_window: true
