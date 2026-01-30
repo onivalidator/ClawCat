@@ -25,3 +25,7 @@ agent:
   #   gpt-5.1 - GPT-5.1 (gpt-5.1) - Fast daily coding
   #   gpt-5  - GPT-5 (gpt-5) - Fastest, simple tasks
   model: "gpt-5.1-codex"
+
+  # Open a monitor window on the desktop when a new session starts
+  # Set to false to disable (useful when running as a service)
+  open_monitor_window: true

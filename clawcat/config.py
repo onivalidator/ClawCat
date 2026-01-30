@@ -22,6 +22,7 @@ class AgentConfig:
     working_dir: str
     timeout_seconds: int
     model: str
+    open_monitor_window: bool = True
 
 
 @dataclass
@@ -131,11 +132,17 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     # Default model - GPT-5.1 Codex (best quality)
     model = agent_raw.get("model", "gpt-5.1-codex")
 
+    # Monitor window option (default True)
+    open_monitor_window = agent_raw.get("open_monitor_window", True)
+    if not isinstance(open_monitor_window, bool):
+        raise ConfigError("'codex.open_monitor_window' must be a boolean")
+
     codex_config = AgentConfig(
         executable=executable,
         working_dir=working_dir,
         timeout_seconds=timeout_seconds,
-        model=model
+        model=model,
+        open_monitor_window=open_monitor_window
     )
 
     return Config(telegram=telegram_config, codex=codex_config)
