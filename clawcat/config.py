@@ -23,6 +23,7 @@ class ClaudeConfig:
     timeout_seconds: int
     model: str
     open_monitor_window: bool = True
+    visible_terminal: bool = False
 
 
 @dataclass
@@ -137,12 +138,18 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     if not isinstance(open_monitor_window, bool):
         raise ConfigError("'claude.open_monitor_window' must be a boolean")
 
+    # Visible terminal option (default False) - shows Claude CLI in a visible console window
+    visible_terminal = claude_raw.get("visible_terminal", False)
+    if not isinstance(visible_terminal, bool):
+        raise ConfigError("'claude.visible_terminal' must be a boolean")
+
     claude_config = ClaudeConfig(
         executable=executable,
         working_dir=working_dir,
         timeout_seconds=timeout_seconds,
         model=model,
-        open_monitor_window=open_monitor_window
+        open_monitor_window=open_monitor_window,
+        visible_terminal=visible_terminal
     )
 
     return Config(telegram=telegram_config, claude=claude_config)

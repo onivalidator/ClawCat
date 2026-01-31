@@ -5,6 +5,7 @@ import json
 import logging
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -317,6 +318,298 @@ class ClaudeRunner:
         """
         return self._session_store.find_session(identifier)
 
+    def _run_subprocess_sync(self, cmd: list, working_dir: str, timeout: int, visible: bool = False, session: Optional[Session] = None) -> tuple:
+        """Run subprocess synchronously (for use in thread).
+
+        Args:
+            cmd: Command to run.
+            working_dir: Working directory.
+            timeout: Timeout in seconds.
+            visible: If True, run in a visible console window.
+            session: Optional session for display info in visible mode.
+
+        Returns:
+            Tuple of (stdout, stderr, returncode, timed_out).
+        """
+        try:
+            if visible and sys.platform == 'win32':
+                # Visible terminal mode: run Claude CLI in a visible console window
+                # Use PowerShell with Tee-Object to show output AND capture to file
+                return self._run_visible_terminal(cmd, working_dir, timeout, session)
+            else:
+                # Hidden mode: run silently in background
+                self._current_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=working_dir,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                )
+
+                try:
+                    stdout, stderr = self._current_process.communicate(timeout=timeout)
+                    return (stdout, stderr, self._current_process.returncode, False)
+                except subprocess.TimeoutExpired:
+                    self._current_process.kill()
+                    stdout, stderr = self._current_process.communicate()
+                    return (stdout, stderr, self._current_process.returncode, True)
+
+        except Exception as e:
+            raise e
+
+    def _run_visible_terminal(self, cmd: list, working_dir: str, timeout: int, session: Optional[Session] = None) -> tuple:
+        """Run Claude CLI in a visible terminal window on the user's desktop.
+
+        Uses Task Scheduler to launch in the interactive session (required for services).
+
+        Args:
+            cmd: Command to run.
+            working_dir: Working directory.
+            timeout: Timeout in seconds.
+            session: Optional session for display info.
+
+        Returns:
+            Tuple of (stdout, stderr, returncode, timed_out).
+        """
+        # Create temp files for stdout, stderr, and the script
+        temp_dir = Path(tempfile.gettempdir()) / "clawcat"
+        temp_dir.mkdir(exist_ok=True)
+
+        timestamp = time.time_ns()
+        stdout_file = temp_dir / f"stdout_{timestamp}.txt"
+        stderr_file = temp_dir / f"stderr_{timestamp}.txt"
+        exitcode_file = temp_dir / f"exitcode_{timestamp}.txt"
+        script_file = temp_dir / f"clawcat_run_{timestamp}.ps1"
+        done_file = temp_dir / f"done_{timestamp}.txt"
+
+        # Build the argument list for Claude CLI
+        # First arg is the executable, rest are arguments
+        claude_exe = cmd[0]
+        claude_args = cmd[1:]
+
+        # Escape arguments for PowerShell
+        args_escaped = []
+        for arg in claude_args:
+            # Escape for PowerShell command line
+            escaped = arg.replace('"', '`"').replace("'", "''")
+            args_escaped.append(f'"{escaped}"')
+
+        args_string = " ".join(args_escaped)
+
+        # Get session display info
+        session_display = session.display_name if session else "New Session"
+        session_id_short = session.id if session else "pending"
+
+        # Create PowerShell script file
+        ps_script = f'''
+$ErrorActionPreference = 'Continue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+
+# Set window title
+$host.UI.RawUI.WindowTitle = "ClawCat Session: {session_display} [{session_id_short}]"
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  ClawCat - Claude CLI Session" -ForegroundColor Cyan
+Write-Host "  Session: {session_display}" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Working directory: {working_dir}" -ForegroundColor Gray
+Write-Host "Model: {cmd[5] if len(cmd) > 5 else 'opus'}" -ForegroundColor Gray
+Write-Host ""
+Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Starting Claude CLI..." -ForegroundColor Yellow
+Write-Host ""
+
+try {{
+    $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+    $pinfo.FileName = "{claude_exe}"
+    $pinfo.Arguments = '{args_string}'
+    $pinfo.WorkingDirectory = "{working_dir}"
+    $pinfo.RedirectStandardOutput = $true
+    $pinfo.RedirectStandardError = $true
+    $pinfo.UseShellExecute = $false
+    $pinfo.CreateNoWindow = $false
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $pinfo
+    $process.Start() | Out-Null
+
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+
+    $stdout | Out-File -FilePath "{stdout_file}" -Encoding utf8
+    $stderr | Out-File -FilePath "{stderr_file}" -Encoding utf8
+    $process.ExitCode | Out-File -FilePath "{exitcode_file}" -Encoding utf8
+
+    # Try to extract session ID from JSON output to update window title
+    try {{
+        $json = $stdout | ConvertFrom-Json
+        if ($json.session_id) {{
+            $shortId = $json.session_id.Substring(0, 8)
+            $host.UI.RawUI.WindowTitle = "ClawCat Session: {session_display} [$shortId]"
+        }}
+    }} catch {{ }}
+
+    Write-Host ""
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Claude CLI Output:" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+
+    # Try to display just the result if JSON, otherwise show raw
+    try {{
+        $json = $stdout | ConvertFrom-Json
+        if ($json.result) {{
+            Write-Host $json.result -ForegroundColor White
+            Write-Host ""
+            Write-Host "Cost: `$$($json.total_cost_usd) | Duration: $($json.duration_ms)ms" -ForegroundColor DarkGray
+        }} else {{
+            Write-Host $stdout
+        }}
+    }} catch {{
+        Write-Host $stdout
+    }}
+
+    if ($stderr) {{
+        Write-Host ""
+        Write-Host "Errors:" -ForegroundColor Red
+        Write-Host $stderr -ForegroundColor Red
+    }}
+}} catch {{
+    Write-Host "Error: $_" -ForegroundColor Red
+    "1" | Out-File -FilePath "{exitcode_file}" -Encoding utf8
+    $_.ToString() | Out-File -FilePath "{stderr_file}" -Encoding utf8
+}}
+
+"done" | Out-File -FilePath "{done_file}" -Encoding utf8
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Green
+Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Command complete." -ForegroundColor Green
+Write-Host "This window will stay open for monitoring." -ForegroundColor Gray
+Write-Host "Close manually when no longer needed." -ForegroundColor Gray
+Write-Host "========================================" -ForegroundColor Green
+Write-Host ""
+
+# Keep window open indefinitely - user can close manually
+# Or could add: Read-Host "Press Enter to close..."
+while ($true) {{
+    Start-Sleep -Seconds 60
+}}
+'''
+
+        # Write the script to a file
+        script_file.write_text(ps_script, encoding='utf-8')
+
+        try:
+            # Use schtasks to run in the interactive session
+            # This creates a temporary scheduled task that runs immediately
+            task_name = f"ClawCat_Run_{timestamp}"
+
+            # Create the scheduled task
+            schtasks_create = [
+                "schtasks", "/create",
+                "/tn", task_name,
+                "/tr", f'powershell.exe -ExecutionPolicy Bypass -File "{script_file}"',
+                "/sc", "once",
+                "/st", "00:00",
+                "/f",  # Force overwrite
+                "/rl", "highest",  # Run with highest privileges
+            ]
+
+            result = subprocess.run(schtasks_create, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to create scheduled task: {result.stderr}")
+                raise Exception(f"Failed to create scheduled task: {result.stderr}")
+
+            # Run the task immediately
+            schtasks_run = ["schtasks", "/run", "/tn", task_name]
+            result = subprocess.run(schtasks_run, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to run scheduled task: {result.stderr}")
+                raise Exception(f"Failed to run scheduled task: {result.stderr}")
+
+            logger.info(f">>> Visible terminal launched via Task Scheduler: {task_name}")
+
+            # Wait for the done file to appear (indicates script completed)
+            timed_out = False
+            start_time = time.time()
+            while not done_file.exists():
+                if time.time() - start_time > timeout:
+                    logger.warning(f">>> Visible terminal timed out after {timeout}s")
+                    timed_out = True
+                    break
+                time.sleep(0.5)
+
+            # Give a moment for files to be fully written
+            time.sleep(0.5)
+
+            # Read output files
+            stdout = b""
+            stderr = b""
+            returncode = 1
+
+            if stdout_file.exists():
+                stdout = stdout_file.read_bytes()
+                try:
+                    stdout_file.unlink()
+                except:
+                    pass
+
+            if stderr_file.exists():
+                stderr = stderr_file.read_bytes()
+                try:
+                    stderr_file.unlink()
+                except:
+                    pass
+
+            if exitcode_file.exists():
+                try:
+                    exitcode_text = exitcode_file.read_text(encoding='utf-8').strip()
+                    # Handle BOM if present
+                    exitcode_text = exitcode_text.lstrip('\ufeff').strip()
+                    returncode = int(exitcode_text) if exitcode_text else 1
+                except (ValueError, Exception) as e:
+                    logger.warning(f"Could not parse exit code: {e}")
+                    returncode = 1
+                try:
+                    exitcode_file.unlink()
+                except:
+                    pass
+
+            # Clean up
+            if done_file.exists():
+                try:
+                    done_file.unlink()
+                except:
+                    pass
+
+            if script_file.exists():
+                try:
+                    script_file.unlink()
+                except:
+                    pass
+
+            # Delete the scheduled task
+            subprocess.run(
+                ["schtasks", "/delete", "/tn", task_name, "/f"],
+                capture_output=True
+            )
+
+            return (stdout, stderr, returncode, timed_out)
+
+        except Exception as e:
+            logger.exception("Error in visible terminal mode")
+            # Clean up on error
+            for f in [script_file, stdout_file, stderr_file, exitcode_file, done_file]:
+                if f.exists():
+                    try:
+                        f.unlink()
+                    except:
+                        pass
+            raise e
+
     async def run(self, instruction: str, session: Optional[Session] = None) -> RunResult:
         """Execute an instruction using Claude CLI.
 
@@ -374,65 +667,55 @@ class ClaudeRunner:
             instruction_preview = instruction[:100] + "..." if len(instruction) > 100 else instruction
             self._log_activity(f"Instruction: {instruction_preview}")
 
-            # Start the subprocess
-            self._current_process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.config.working_dir
+            # Run subprocess in thread to avoid asyncio subprocess issues on Windows Service
+            stdout, stderr, returncode, timed_out = await asyncio.to_thread(
+                self._run_subprocess_sync,
+                cmd,
+                self.config.working_dir,
+                self.config.timeout_seconds,
+                self.config.visible_terminal,
+                session
             )
 
-            logger.info(f">>> Process started with PID: {self._current_process.pid}")
-
-            try:
-                # Wait for completion with timeout
-                stdout, stderr = await asyncio.wait_for(
-                    self._current_process.communicate(),
-                    timeout=self.config.timeout_seconds
-                )
-
-                stdout_text = stdout.decode("utf-8", errors="replace")
-                stderr_text = stderr.decode("utf-8", errors="replace")
-
-                logger.info(f">>> Process completed with return code: {self._current_process.returncode}")
-                logger.info(f">>> stdout length: {len(stdout_text)}, stderr length: {len(stderr_text)}")
-
-                # Update session message count
-                session.message_count += 1
-
-                # Check if process was cancelled
-                if self._current_process.returncode == -15 or self._current_process.returncode == 1:
-                    if "cancelled" in stderr_text.lower():
-                        return RunResult(
-                            status=RunStatus.CANCELLED,
-                            output="",
-                            error="Task was cancelled.",
-                            session_id=session.claude_session_id
-                        )
-
-                # Try to parse JSON output and capture session ID
-                result = self._parse_output(stdout_text, stderr_text, self._current_process.returncode, session)
-
-                # Log result to activity file
-                status_str = result.status.value.upper()
-                output_preview = result.output[:200] + "..." if len(result.output) > 200 else result.output
-                cost_str = f"${result.cost_usd:.4f}" if result.cost_usd else "N/A"
-                self._log_activity(f"Result [{status_str}]: {output_preview}")
-                self._log_activity(f"Cost: {cost_str}, Messages: {session.message_count}")
-
-                return result
-
-            except asyncio.TimeoutError:
-                # Kill the process on timeout
-                logger.warning(f">>> Process timed out after {self.config.timeout_seconds}s, killing...")
-                self._current_process.kill()
-                await self._current_process.wait()
+            if timed_out:
+                logger.warning(f">>> Process timed out after {self.config.timeout_seconds}s")
                 return RunResult(
                     status=RunStatus.TIMEOUT,
                     output="",
                     error=f"Command timed out after {self.config.timeout_seconds} seconds.",
                     session_id=session.claude_session_id
                 )
+
+            stdout_text = stdout.decode("utf-8", errors="replace")
+            stderr_text = stderr.decode("utf-8", errors="replace")
+
+            logger.info(f">>> Process completed with return code: {returncode}")
+            logger.info(f">>> stdout length: {len(stdout_text)}, stderr length: {len(stderr_text)}")
+
+            # Update session message count
+            session.message_count += 1
+
+            # Check if process was cancelled
+            if returncode == -15 or returncode == 1:
+                if "cancelled" in stderr_text.lower():
+                    return RunResult(
+                        status=RunStatus.CANCELLED,
+                        output="",
+                        error="Task was cancelled.",
+                        session_id=session.claude_session_id
+                    )
+
+            # Try to parse JSON output and capture session ID
+            result = self._parse_output(stdout_text, stderr_text, returncode, session)
+
+            # Log result to activity file
+            status_str = result.status.value.upper()
+            output_preview = result.output[:200] + "..." if len(result.output) > 200 else result.output
+            cost_str = f"${result.cost_usd:.4f}" if result.cost_usd else "N/A"
+            self._log_activity(f"Result [{status_str}]: {output_preview}")
+            self._log_activity(f"Cost: {cost_str}, Messages: {session.message_count}")
+
+            return result
 
         except FileNotFoundError:
             logger.error(f"Claude CLI not found at: {self.config.executable}")
@@ -466,7 +749,9 @@ class ClaudeRunner:
         """
         # Try to parse as JSON
         try:
-            data = json.loads(stdout)
+            # Strip UTF-8 BOM if present (PowerShell Out-File adds this)
+            stdout_clean = stdout.lstrip('\ufeff').strip()
+            data = json.loads(stdout_clean)
 
             # Extract result from JSON response
             # Field names per Claude CLI --output-format json:

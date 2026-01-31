@@ -29,3 +29,8 @@ claude:
   # Open a monitor window on the desktop when a new session starts
   # Set to false to disable (useful when running as a service)
   open_monitor_window: true
+
+  # Show Claude CLI in a visible terminal window
+  # When enabled, each Claude command runs in a visible PowerShell window
+  # so you can see the work in progress (useful for remote monitoring via AnyDesk, etc.)
+  visible_terminal: false
