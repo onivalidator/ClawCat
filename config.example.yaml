@@ -1,0 +1,50 @@
+# ClawCat Configuration
+# Copy this file to config.yaml and fill in your values.
+
+telegram:
+  # Get your bot token from @BotFather on Telegram.
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+
+  # Your Telegram user ID from @userinfobot.
+  # This is the only Telegram user who can control the bot.
+  authorized_user_id: 123456789
+
+agent:
+  # Codex is the default provider.
+  provider: "codex"
+
+  # Path to the local agent CLI. Use "codex" when it is already on PATH.
+  executable: "codex"
+
+  # Working directory passed to the local agent.
+  # macOS example: "/Users/YOUR_USER/ClawCatWorkspace"
+  # Windows example: "C:\\Users\\YOUR_USER\\ClawCatWorkspace"
+  working_dir: "C:\\Users\\YOUR_USER\\ClawCatWorkspace"
+
+  # Maximum time to wait for a command.
+  timeout_seconds: 300
+
+  # Leave empty/null to use the Codex CLI default model from local config.
+  # You can also choose one of the configured models below.
+  model: null
+  models:
+    - "default"
+    - "gpt-5.1-codex"
+    - "gpt-5.1"
+    - "gpt-5"
+
+  # Safe defaults for remote operation.
+  # read-only prevents file writes; workspace-write allows edits only in the workspace.
+  sandbox_mode: "read-only"
+
+  # Full-access mode is hidden unless this is explicitly true.
+  allow_dangerous_mode: false
+
+  # Set true only if you want a local activity monitor window.
+  open_monitor_window: false
+
+  # Reserved for providers that support visible terminal execution.
+  visible_terminal: false
+
+  # Set true only if your workspace is intentionally not a git repository.
+  skip_git_repo_check: false
