@@ -2,61 +2,65 @@
 
 ## Project Overview
 
-ClawCat is a Telegram bot for remote control of Claude Code CLI on Windows.
+ClawCat is a single-user Telegram controller for local coding-agent CLIs. Codex
+is the default public provider; legacy Claude CLI support remains available for
+existing private installs.
 
 ## Project Structure
 
-```
+```text
 ClawCat/
 ├── clawcat/
-│   ├── bot.py           # Telegram bot commands and handlers
-│   ├── claude_runner.py # Claude CLI subprocess management
-│   ├── config.py        # Configuration loading
-│   ├── session_store.py # Session persistence (JSON)
-│   ├── session_monitor.py # Desktop monitor window (tkinter)
-│   └── service.py       # Windows service wrapper
-├── config.yaml          # Active configuration (gitignored)
-├── config.example.yaml  # Configuration template
-├── run.py               # Console entry point
-└── install_service.py   # Service installer
+│   ├── agent_runner.py   # Provider-aware local agent subprocess management
+│   ├── bot.py            # Telegram bot commands and handlers
+│   ├── claude_runner.py  # Backward-compatible imports
+│   ├── config.py         # Configuration loading and validation
+│   ├── session_store.py  # Session persistence metadata
+│   ├── session_monitor.py # Optional desktop monitor window
+│   └── service.py        # Windows service wrapper
+├── tests/                # Unit tests
+├── config.example.yaml   # Configuration template
+├── run.py                # Console entry point
+└── install_service.py    # Optional Windows service installer
 ```
 
 ## Development Rules
 
 ### Command Registry
 
-When adding or modifying Telegram commands, you MUST update the `COMMANDS` dictionary in `clawcat/bot.py`. This dictionary is the single source of truth for the `/commands` command output.
-
-```python
-# In ClawCatBot class
-COMMANDS = {
-    "command_name": "Description of what this command does",
-    ...
-}
-```
+When adding or modifying Telegram commands, update the `COMMANDS` dictionary in
+`clawcat/bot.py`. This dictionary is the source of truth for `/commands` output.
 
 Also ensure:
+
 1. Add the command handler method (`cmd_<name>`)
 2. Register the handler in `build_application()`
-3. Update `COMMANDS` dictionary
+3. Update `COMMANDS`
 
-### Session Storage
+### Security Defaults
 
-Sessions are stored as JSON files in `{working_dir}/ClawCat_sessions/`. Each session file is named by its Claude session ID.
+- Keep Codex as the public default provider.
+- Keep remote runs sandboxed by default.
+- Do not expose full-access mode unless `allow_dangerous_mode` is explicitly
+  enabled in config.
+- Do not commit `config.yaml`, logs, session files, tokens, or local workspaces.
+- Preserve macOS/Linux console mode when changing Windows service code.
 
 ### Configuration
 
-- Config is loaded from `config.yaml`
-- Never commit `config.yaml` (contains secrets)
-- Update `config.example.yaml` when adding new options
+- Config is loaded from `config.yaml`.
+- `config.yaml` is gitignored because it contains the Telegram bot token.
+- Update `config.example.yaml` when adding new options.
 
 ## Running
 
-```powershell
-# Console mode
+```bash
 python run.py
+python -m unittest discover -s tests
+```
 
-# As Windows service
-python install_service.py install
-python install_service.py start
+Windows service mode is optional:
+
+```powershell
+python install_service.py
 ```

@@ -1,5 +1,7 @@
 # ClawCat
 
+![CI](https://github.com/onivalidator/ClawCat/actions/workflows/ci.yml/badge.svg)
+
 ClawCat is a single-user Telegram controller for local coding-agent CLIs. The
 public-ready path is centered on Codex/OpenAI-compatible workflows: a trusted
 user can send a task from Telegram, ClawCat runs the local Codex CLI in a
@@ -216,3 +218,10 @@ does nothing on non-Windows platforms.
 - Start with `read-only` sandboxing.
 - Add repository-specific operating notes before enabling `workspace-write`.
 - Do not enable full-access mode on a machine with broad personal credentials.
+
+## Project Docs
+
+- [Security policy](SECURITY.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [OpenAI grant readiness notes](docs/GRANT_READINESS.md)
+- [MIT license](LICENSE)
