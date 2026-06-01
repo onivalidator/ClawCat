@@ -17,7 +17,7 @@ class SessionMonitorWindow:
         """Initialize the monitor window.
 
         Args:
-            session_id: The Codex session ID.
+            session_id: The local agent session ID.
             session_name: Display name for the session.
             log_file: Path to the activity log file.
         """
@@ -94,7 +94,7 @@ class SessionMonitorWindow:
         self.log_display.tag_configure("instruction", foreground="#66ccff")
 
         # Initial message
-        self._append_log("Session monitor started. Waiting for Codex CLI activity...\n", "info")
+        self._append_log("Session monitor started. Waiting for local-agent activity...\n", "info")
 
         # Start polling
         self.poll_log()

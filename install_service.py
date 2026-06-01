@@ -31,6 +31,11 @@ def install_service():
     print("=" * 50)
     print()
 
+    if sys.platform != "win32":
+        print("Windows service installation is only available on Windows.")
+        print("On macOS or Linux, run console mode with: python run.py")
+        return False
+
     if not check_admin():
         print("ERROR: Administrator privileges required!")
         print()
@@ -85,7 +90,8 @@ def install_service():
             print("  Stop:    net stop ClawCat")
             print("  Remove:  python install_service.py --remove")
             print()
-            print("Logs: C:\\ClawCat\\Logs\\clawcat-service.log")
+            print("Logs: C:\\ClawCatLogs\\clawcat-service.log")
+            print("Set CLAWCAT_LOG_DIR to use a different log directory.")
 
             # Ask to start now
             print()
@@ -107,6 +113,10 @@ def install_service():
 def remove_service():
     """Remove the ClawCat Windows service."""
     print("Removing ClawCat service...")
+
+    if sys.platform != "win32":
+        print("Windows service removal is only available on Windows.")
+        return False
 
     if not check_admin():
         print("ERROR: Administrator privileges required!")

@@ -1,41 +1,57 @@
 """Configuration management for ClawCat."""
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from dataclasses import dataclass
 from typing import Optional
 
 import yaml
 
 
+class ConfigError(Exception):
+    """Configuration error."""
+
+
 @dataclass
 class TelegramConfig:
     """Telegram bot configuration."""
+
     bot_token: str
     authorized_user_id: int
 
 
 @dataclass
 class AgentConfig:
-    """Codex CLI configuration."""
+    """Local coding-agent CLI configuration."""
+
+    provider: str
     executable: str
     working_dir: str
     timeout_seconds: int
-    model: str
-    open_monitor_window: bool = True
+    model: Optional[str] = None
+    models: list[str] = field(default_factory=list)
+    sandbox_mode: str = "read-only"
+    allow_dangerous_mode: bool = False
+    open_monitor_window: bool = False
     visible_terminal: bool = False
+    skip_git_repo_check: bool = False
+
+
+# Backwards-compatible alias for older imports/config language.
+AgentConfig = AgentConfig
 
 
 @dataclass
 class Config:
     """Main configuration container."""
+
     telegram: TelegramConfig
     agent: AgentConfig
 
-
-class ConfigError(Exception):
-    """Configuration error."""
-    pass
+    @property
+    def codex(self) -> AgentConfig:
+        """Legacy accessor for older code paths."""
+        return self.agent
 
 
 def find_config_file() -> Path:
@@ -46,7 +62,6 @@ def find_config_file() -> Path:
     2. ./config.yaml (current directory)
     3. Script directory/config.yaml
     """
-    # Check environment variable
     env_path = os.environ.get("CLAWCAT_CONFIG")
     if env_path:
         path = Path(env_path)
@@ -54,12 +69,10 @@ def find_config_file() -> Path:
             return path
         raise ConfigError(f"Config file specified in CLAWCAT_CONFIG not found: {env_path}")
 
-    # Check current directory
     cwd_config = Path("config.yaml")
     if cwd_config.exists():
         return cwd_config
 
-    # Check script directory
     script_dir = Path(__file__).parent.parent
     script_config = script_dir / "config.yaml"
     if script_config.exists():
@@ -70,18 +83,93 @@ def find_config_file() -> Path:
     )
 
 
+def _require_bool(raw: dict, key: str, default: bool, section: str) -> bool:
+    value = raw.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"'{section}.{key}' must be a boolean")
+    return value
+
+
+def _load_agent_config(raw: dict) -> AgentConfig:
+    """Load agent config, accepting both new `agent` and legacy `codex` sections."""
+    agent_raw = raw.get("agent")
+    legacy_agent_raw = raw.get("codex")
+
+    if agent_raw and legacy_agent_raw:
+        raise ConfigError("Use either 'agent' or legacy 'codex' config, not both")
+
+    if agent_raw is None:
+        agent_raw = legacy_agent_raw or {}
+        default_provider = "codex" if legacy_agent_raw is not None else "codex"
+    else:
+        default_provider = "codex"
+
+    if not isinstance(agent_raw, dict):
+        raise ConfigError("'agent' section must be a YAML dictionary")
+
+    provider = str(agent_raw.get("provider", default_provider)).lower().strip()
+    if provider not in {"codex", "codex"}:
+        raise ConfigError("'agent.provider' must be either 'codex' or 'codex'")
+
+    if provider == "codex":
+        default_executable = "codex"
+        default_model = None
+        default_models = ["default", "gpt-5.1-codex", "gpt-5.1", "gpt-5"]
+    else:
+        default_executable = "codex"
+        default_model = "gpt-5.1-codex"
+        default_models = ["gpt-5.1-codex", "gpt-5.1", "gpt-5"]
+
+    executable = str(agent_raw.get("executable", default_executable))
+    working_dir = str(agent_raw.get("working_dir", str(Path.home())))
+
+    timeout_seconds = agent_raw.get("timeout_seconds", 300)
+    if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
+        raise ConfigError("'agent.timeout_seconds' must be a positive integer")
+
+    raw_model = agent_raw.get("model", default_model)
+    model = str(raw_model).strip() if raw_model not in (None, "") else None
+
+    models = agent_raw.get("models", default_models)
+    if not isinstance(models, list) or not all(isinstance(item, str) for item in models):
+        raise ConfigError("'agent.models' must be a list of strings")
+    if model and model not in models:
+        models = [model] + models
+
+    sandbox_mode = str(agent_raw.get("sandbox_mode", "read-only")).strip()
+    if sandbox_mode not in {"read-only", "workspace-write", "danger-full-access"}:
+        raise ConfigError(
+            "'agent.sandbox_mode' must be read-only, workspace-write, or danger-full-access"
+        )
+
+    section_name = "agent"
+    allow_dangerous_mode = _require_bool(agent_raw, "allow_dangerous_mode", False, section_name)
+    open_monitor_window = _require_bool(agent_raw, "open_monitor_window", False, section_name)
+    visible_terminal = _require_bool(agent_raw, "visible_terminal", False, section_name)
+    skip_git_repo_check = _require_bool(agent_raw, "skip_git_repo_check", False, section_name)
+
+    if sandbox_mode == "danger-full-access" and not allow_dangerous_mode:
+        raise ConfigError(
+            "'agent.sandbox_mode: danger-full-access' requires 'allow_dangerous_mode: true'"
+        )
+
+    return AgentConfig(
+        provider=provider,
+        executable=executable,
+        working_dir=working_dir,
+        timeout_seconds=timeout_seconds,
+        model=model,
+        models=models,
+        sandbox_mode=sandbox_mode,
+        allow_dangerous_mode=allow_dangerous_mode,
+        open_monitor_window=open_monitor_window,
+        visible_terminal=visible_terminal,
+        skip_git_repo_check=skip_git_repo_check,
+    )
+
+
 def load_config(config_path: Optional[Path] = None) -> Config:
-    """Load and validate configuration from YAML file.
-
-    Args:
-        config_path: Optional path to config file. If None, searches default locations.
-
-    Returns:
-        Validated Config object.
-
-    Raises:
-        ConfigError: If config is missing or invalid.
-    """
+    """Load and validate configuration from YAML file."""
     if config_path is None:
         config_path = find_config_file()
 
@@ -96,10 +184,9 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     if not isinstance(raw, dict):
         raise ConfigError("Config file must be a YAML dictionary")
 
-    # Validate telegram section
     telegram_raw = raw.get("telegram")
-    if not telegram_raw:
-        raise ConfigError("Missing 'telegram' section in config")
+    if not telegram_raw or not isinstance(telegram_raw, dict):
+        raise ConfigError("Missing or invalid 'telegram' section in config")
 
     bot_token = telegram_raw.get("bot_token")
     if not bot_token or not isinstance(bot_token, str):
@@ -109,47 +196,10 @@ def load_config(config_path: Optional[Path] = None) -> Config:
     if not authorized_user_id or not isinstance(authorized_user_id, int):
         raise ConfigError("Missing or invalid 'telegram.authorized_user_id' (must be integer)")
 
-    telegram_config = TelegramConfig(
-        bot_token=bot_token,
-        authorized_user_id=authorized_user_id
+    return Config(
+        telegram=TelegramConfig(
+            bot_token=bot_token,
+            authorized_user_id=authorized_user_id,
+        ),
+        agent=_load_agent_config(raw),
     )
-
-    # Validate codex section
-    agent_raw = raw.get("codex", {})
-
-    # Default Codex executable path
-    default_executable = r"codex"
-    executable = agent_raw.get("executable", default_executable)
-
-    # Default working directory
-    default_working_dir = r"C:\ClawCat\Workspace"
-    working_dir = agent_raw.get("working_dir", default_working_dir)
-
-    # Default timeout (5 minutes)
-    timeout_seconds = agent_raw.get("timeout_seconds", 300)
-    if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
-        raise ConfigError("'codex.timeout_seconds' must be a positive integer")
-
-    # Default model - GPT-5.1 Codex (best quality)
-    model = agent_raw.get("model", "gpt-5.1-codex")
-
-    # Monitor window option (default True)
-    open_monitor_window = agent_raw.get("open_monitor_window", True)
-    if not isinstance(open_monitor_window, bool):
-        raise ConfigError("'codex.open_monitor_window' must be a boolean")
-
-    # Visible terminal option (default False) - shows Codex CLI in a visible console window
-    visible_terminal = agent_raw.get("visible_terminal", False)
-    if not isinstance(visible_terminal, bool):
-        raise ConfigError("'codex.visible_terminal' must be a boolean")
-
-    codex_config = AgentConfig(
-        executable=executable,
-        working_dir=working_dir,
-        timeout_seconds=timeout_seconds,
-        model=model,
-        open_monitor_window=open_monitor_window,
-        visible_terminal=visible_terminal
-    )
-
-    return Config(telegram=telegram_config, codex=codex_config)

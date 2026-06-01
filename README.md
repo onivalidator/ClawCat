@@ -1,147 +1,218 @@
 # ClawCat
 
-Telegram Remote Control for Codex CLI.
+ClawCat is a single-user Telegram controller for local coding-agent CLIs. The
+public-ready path is centered on Codex/OpenAI-compatible workflows: a trusted
+user can send a task from Telegram, ClawCat runs the local Codex CLI in a
+configured workspace, and the final answer comes back to Telegram.
 
-Control Codex on your Windows machine from anywhere via Telegram.
+The bot stores no OpenAI API key. It relies on the local Codex CLI auth and
+config already present on the machine.
+
+## Why This Exists
+
+Maintainers often need to check a build, triage a small bug, or start a coding
+agent while away from the keyboard. ClawCat keeps that workflow local and
+auditable instead of forwarding broad shell access to a hosted bot.
 
 ## Features
 
-- Send instructions to Codex remotely via Telegram
-- Check Codex status and availability
-- Cancel running tasks
-- Run as Windows service for always-on operation
-- Single-user security model
-- Model selection (GPT-5.1 Codex, GPT-5.1, GPT-5)
-- Session management with conversation continuity
-- Dangerous mode for unrestricted execution
+- Telegram command surface for one authorized user
+- Codex CLI provider by default
+- Legacy Codex CLI provider for existing private installs
+- Read-only sandbox by default for remote tasks
+- Optional workspace-write mode for controlled edits
+- Full-access mode hidden unless explicitly enabled in config
+- Session nicknames, pause/resume metadata, and cancellation
+- Optional local monitor window for desktop/server visibility
+- Windows service helper for always-on use
+- macOS/Linux console mode support
+
+## Safety Model
+
+ClawCat is intentionally conservative by default:
+
+- The bot only accepts commands from `telegram.authorized_user_id`.
+- Codex runs locally with your existing Codex auth; no API key is stored in
+  `config.yaml`.
+- `sandbox_mode` defaults to `read-only`.
+- ClawCat uses `codex exec`, Codex's non-interactive command path, rather than
+  an interactive terminal session.
+- Full-access mode is not shown in Telegram unless
+  `agent.allow_dangerous_mode: true`.
+- Keep `config.yaml` private because it contains the Telegram bot token.
+
+Remote access to a coding agent is still powerful. Use a dedicated workspace
+with a clean git history and avoid pointing ClawCat at sensitive directories.
 
 ## Setup
 
-### 1. Create a Telegram Bot
-
-1. Open Telegram and message [@BotFather](https://t.me/BotFather)
-2. Send `/newbot` and follow the prompts
-3. Copy the bot token (looks like `123456789:ABCdefGHI...`)
-
-### 2. Get Your Telegram User ID
-
-1. Message [@userinfobot](https://t.me/userinfobot)
-2. It will reply with your user ID (a number like `123456789`)
-
-### 3. Install Dependencies
+### 1. Install Requirements
 
 ```powershell
-cd C:\ClawCat\Workspace
 pip install -r requirements.txt
 ```
 
-### 4. Create Configuration
+On macOS or Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Install and authenticate the Codex CLI on the same machine:
+
+```powershell
+codex --version
+codex login
+```
+
+### 2. Create a Telegram Bot
+
+1. Message [@BotFather](https://t.me/BotFather).
+2. Send `/newbot` and follow the prompts.
+3. Copy the bot token.
+
+### 3. Get Your Telegram User ID
+
+Message [@userinfobot](https://t.me/userinfobot). It will return a numeric user
+ID.
+
+### 4. Configure ClawCat
 
 ```powershell
 copy config.example.yaml config.yaml
 ```
 
-Edit `config.yaml` with your bot token and user ID:
+On macOS or Linux:
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+Minimal Codex configuration:
 
 ```yaml
 telegram:
   bot_token: "YOUR_BOT_TOKEN"
-  authorized_user_id: YOUR_USER_ID
+  authorized_user_id: 123456789
 
 agent:
+  provider: "codex"
   executable: "codex"
-  working_dir: "C:\\ClawCat\\Workspace"
+  working_dir: "C:\\Users\\YOUR_USER\\ClawCatWorkspace"
   timeout_seconds: 300
-  model: "gpt-5.1-codex"  # gpt-5.1-codex (default), gpt-5.1, or gpt-5
+  model: null
+  sandbox_mode: "read-only"
+  allow_dangerous_mode: false
 ```
 
-### 5. Test in Console Mode
+macOS example:
+
+```yaml
+agent:
+  provider: "codex"
+  executable: "codex"
+  working_dir: "/Users/YOUR_USER/ClawCatWorkspace"
+  sandbox_mode: "read-only"
+  allow_dangerous_mode: false
+```
+
+Use `sandbox_mode: "workspace-write"` when you want Codex to edit files in the
+configured workspace.
+
+### 5. Run in Console Mode
 
 ```powershell
 python run.py
 ```
 
-Send `/start` to your bot in Telegram to verify it works.
+On macOS or Linux:
 
-## Usage
+```bash
+python3 run.py
+```
 
-### Bot Commands
+Send `/start` to the Telegram bot.
 
-- `/start` - Welcome message and help
-- `/status` - Check Codex CLI availability and session info
-- `/model` - Select AI model (GPT-5.1 Codex, GPT-5.1, GPT-5)
-- `/newsession` - Start a new session (normal or dangerous mode)
-- `/cancel` - Cancel a running task
+## Commands
 
-### Available Models
+- `/start` - Welcome and quick status
+- `/commands` - Command list
+- `/status` - CLI availability, config, and session info
+- `/model` - Select one of the configured models
+- `/newsession` - Start a safe session
+- `/nickname <name>` - Name the active session
+- `/pause` - Save active session metadata
+- `/listsessions` - List saved sessions
+- `/loadsession <name or id>` - Resume saved session metadata
+- `/cancel` - Stop the current run
 
-| Model | Description |
-|-------|-------------|
-| `gpt-5.1-codex` | **GPT-5.1 Codex** (gpt-5.1-codex) - State-of-the-art software engineering (default) |
-| `gpt-5.1` | **GPT-5.1** (gpt-5.1) - Fast daily coding tasks |
-| `gpt-5` | **GPT-5** (gpt-5) - Fastest, high-frequency tasks |
+Any non-command text is sent to the configured local agent.
 
-### Sending Instructions
+## Tests
 
-Just send any text message to the bot. It will be passed to Codex as an instruction.
+```bash
+python -m unittest discover -s tests
+```
 
-Examples:
-- "What is 2+2?"
-- "List the files in my Documents folder"
-- "Create a simple Python script that prints hello world"
+The current tests cover safe Codex defaults, dangerous-mode gating, command
+construction, and config validation.
+
+## Provider Notes
+
+### Codex
+
+Codex is the default provider. ClawCat runs:
+
+```text
+codex exec --sandbox <mode> --output-last-message <file> "<prompt>"
+```
+
+For safety, ClawCat starts a fresh non-interactive Codex run for each Telegram
+task. The current `codex exec resume` path does not expose the same sandbox
+flags, so ClawCat does not use it for remote execution.
+
+### Codex Legacy Mode
+
+Existing private installs can still use:
+
+```yaml
+agent:
+  provider: "codex"
+  executable: "C:\\Users\\YOUR_USER\\.local\\bin\\codex"
+  model: "gpt-5.1"
+```
+
+New public deployments should prefer Codex.
 
 ## Running as a Windows Service
 
-For always-on operation, install ClawCat as a Windows service:
-
-### Install Service
-
-Run as Administrator:
+Windows service mode is optional. Run as Administrator:
 
 ```powershell
 python install_service.py
 ```
 
-### Service Commands
+Service commands:
 
 ```powershell
-# Start the service
 net start ClawCat
-
-# Stop the service
 net stop ClawCat
-
-# Remove the service
 python install_service.py --remove
 ```
 
-### Service Logs
+Set `CLAWCAT_LOG_DIR` to choose where service logs are written. The default is
+`C:\ClawCatLogs`.
 
-Logs are written to: `C:\ClawCat\Logs\clawcat-service.log`
+On macOS and Linux, use a process manager such as `launchd`, `systemd`, or
+`tmux` around `python3 run.py`; the Windows service installer intentionally
+does nothing on non-Windows platforms.
 
-## Security
+## Public Release Checklist
 
-- **Single user only**: Only your Telegram user ID can use the bot
-- **Local execution**: Bot runs on your machine, no cloud component
-- **No permission bypass**: Codex runs with normal user permissions
-- **Protect config.yaml**: Contains your bot token (keep it private)
-
-## Troubleshooting
-
-### Bot not responding
-
-1. Check if the bot is running (`python run.py`)
-2. Verify your bot token is correct
-3. Check that your user ID matches
-
-### Codex commands failing
-
-1. Run `/status` to check Codex availability
-2. Verify the Codex CLI path in config.yaml
-3. Check Codex CLI works directly: `codex --version`
-
-### Service won't start
-
-1. Check logs: `C:\ClawCat\Logs\clawcat-service.log`
-2. Verify config.yaml exists in the ClawCat directory
-3. Make sure Python and dependencies are installed
+- Keep `config.yaml` out of git.
+- Use a dedicated workspace.
+- Start with `read-only` sandboxing.
+- Add repository-specific operating notes before enabling `workspace-write`.
+- Do not enable full-access mode on a machine with broad personal credentials.

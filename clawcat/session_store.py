@@ -26,12 +26,12 @@ class SessionStore:
         """Get path to a session's JSON file.
 
         Args:
-            session_id: The Codex session ID.
+            session_id: The local agent session ID.
 
         Returns:
             Path to the session's JSON file.
         """
-        # Sanitize session ID for use as filename
+        # Sanitize session ID for use as filename.
         safe_id = session_id.replace("/", "_").replace("\\", "_").replace(":", "_")
         return self.storage_dir / f"{safe_id}.json"
 
@@ -44,21 +44,26 @@ class SessionStore:
         Returns:
             True if saved successfully, False otherwise.
         """
-        if not session.agent_session_id:
+        agent_session_id = getattr(session, "agent_session_id", None) or getattr(
+            session, "agent_session_id", None
+        )
+        if not agent_session_id:
             logger.warning("Cannot save session without agent_session_id")
             return False
 
         data = {
+            "provider": getattr(session, "provider", "codex"),
             "model": session.model,
             "dangerous_mode": session.dangerous_mode,
             "message_count": session.message_count,
-            "agent_session_id": session.agent_session_id,
+            "agent_session_id": agent_session_id,
+            "agent_session_id": agent_session_id,
             "nickname": session.nickname,
             "created_at": session.created_at or time.time(),
             "updated_at": time.time(),
         }
 
-        filepath = self._session_file(session.agent_session_id)
+        filepath = self._session_file(agent_session_id)
         temp_path = filepath.with_suffix(".tmp")
 
         try:
@@ -67,7 +72,7 @@ class SessionStore:
 
             # Atomic rename
             temp_path.replace(filepath)
-            logger.info(f"Session saved: {session.agent_session_id[:8]}")
+            logger.info(f"Session saved: {agent_session_id[:8]}")
             return True
 
         except Exception as e:
@@ -80,7 +85,7 @@ class SessionStore:
         """Load session data from disk.
 
         Args:
-            session_id: The Codex session ID (full or prefix).
+            session_id: The local agent session ID (full or prefix).
 
         Returns:
             Session data dict or None if not found.
@@ -100,7 +105,8 @@ class SessionStore:
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    if data.get("agent_session_id", "").startswith(session_id):
+                    saved_id = data.get("agent_session_id") or data.get("agent_session_id", "")
+                    if saved_id.startswith(session_id):
                         return data
             except (json.JSONDecodeError, IOError):
                 continue
@@ -120,11 +126,13 @@ class SessionStore:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
+                saved_id = data.get("agent_session_id") or data["agent_session_id"]
                 sessions.append({
-                    "id": data["agent_session_id"][:8],
-                    "full_id": data["agent_session_id"],
+                    "id": saved_id[:8],
+                    "full_id": saved_id,
+                    "provider": data.get("provider", "codex"),
                     "nickname": data.get("nickname"),
-                    "model": data["model"],
+                    "model": data.get("model"),
                     "messages": data["message_count"],
                     "dangerous_mode": data.get("dangerous_mode", False),
                     "created_at": data.get("created_at"),
@@ -164,7 +172,7 @@ class SessionStore:
         """Delete a saved session.
 
         Args:
-            session_id: The Codex session ID.
+            session_id: The local agent session ID.
 
         Returns:
             True if deleted, False if not found.
