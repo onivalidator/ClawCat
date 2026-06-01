@@ -14,8 +14,8 @@ from telegram.ext import (
     filters,
 )
 
+from .agent_runner import AgentRunner, MODEL_DESCRIPTIONS, MODEL_IDENTIFIERS, RunStatus
 from .config import Config
-from .claude_runner import ClaudeRunner, RunStatus, AVAILABLE_MODELS, MODEL_DESCRIPTIONS, MODEL_IDENTIFIERS
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ MAX_MESSAGE_LENGTH = 4096
 
 
 class ClawCatBot:
-    """Telegram bot for remote Claude Code control."""
+    """Telegram bot for remote local-agent control."""
 
     def __init__(self, config: Config):
         """Initialize the bot.
@@ -34,7 +34,7 @@ class ClawCatBot:
             config: Application configuration.
         """
         self.config = config
-        self.runner = ClaudeRunner(config.claude)
+        self.runner = AgentRunner(config.agent)
         self.application: Optional[Application] = None
 
     def _is_authorized(self, user_id: int) -> bool:
@@ -71,8 +71,8 @@ class ClawCatBot:
         "start": "Welcome message and quick help",
         "commands": "List all commands with descriptions",
         "status": "Check CLI status and current session info",
-        "model": "Select AI model (opus/sonnet/haiku)",
-        "newsession": "Start a new Claude session",
+        "model": "Select the configured local-agent model",
+        "newsession": "Start a new agent session",
         "nickname <name>": "Set a nickname for current session",
         "pause": "Save current session to disk",
         "listsessions": "Show all saved sessions",
@@ -89,10 +89,10 @@ class ClawCatBot:
 
         await update.message.reply_text(
             f"Welcome to ClawCat!\n\n"
-            f"Remote interface to Claude Code CLI.\n"
+            f"Remote interface to {self.runner.provider_label}/local coding-agent CLI.\n"
             f"CLI Version: {version}\n\n"
             f"Use /commands to see all available commands.\n\n"
-            f"Send any message to execute via Claude CLI."
+            f"Send any message to execute via the configured local agent."
         )
 
     async def cmd_commands(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -117,12 +117,14 @@ class ClawCatBot:
         status_parts = []
 
         if version:
-            status_parts.append(f"Claude CLI: {version}")
+            status_parts.append(f"{self.runner.provider_label} CLI: {version}")
         else:
-            status_parts.append("Claude CLI: NOT AVAILABLE")
+            status_parts.append(f"{self.runner.provider_label} CLI: NOT AVAILABLE")
 
-        status_parts.append(f"Working directory: {self.config.claude.working_dir}")
-        status_parts.append(f"Timeout: {self.config.claude.timeout_seconds}s")
+        status_parts.append(f"Provider: {self.runner.provider_label}")
+        status_parts.append(f"Working directory: {self.config.agent.working_dir}")
+        status_parts.append(f"Timeout: {self.config.agent.timeout_seconds}s")
+        status_parts.append(f"Dangerous mode allowed: {self.config.agent.allow_dangerous_mode}")
         status_parts.append("")
 
         # Session info
@@ -144,7 +146,7 @@ class ClawCatBot:
 
         # Build inline keyboard with model descriptions
         buttons = []
-        for model in AVAILABLE_MODELS:
+        for model in self.runner.available_models:
             desc = MODEL_DESCRIPTIONS.get(model, model)
             if model == current:
                 label = f"* {desc}"
@@ -156,7 +158,7 @@ class ClawCatBot:
 
         session_note = ""
         if session:
-            session_note = f"\n\nNote: Current session uses {session.model}. New model applies to new sessions."
+            session_note = f"\n\nNote: Current session uses {session.model_display}. New model applies to new sessions."
 
         await update.message.reply_text(
             f"Select model:{session_note}",
@@ -169,14 +171,16 @@ class ClawCatBot:
             return
 
         # Build inline keyboard for session options
-        buttons = [
-            [InlineKeyboardButton("Normal session", callback_data="session:normal")],
-            [InlineKeyboardButton("Dangerous mode (skip permissions)", callback_data="session:dangerous")],
-        ]
+        buttons = [[InlineKeyboardButton("Normal safe session", callback_data="session:normal")]]
+        if self.config.agent.allow_dangerous_mode:
+            buttons.append(
+                [InlineKeyboardButton("Full-access session (explicitly enabled)", callback_data="session:dangerous")]
+            )
         keyboard = InlineKeyboardMarkup(buttons)
 
         await update.message.reply_text(
             f"Start new session with model: {self.runner.current_model}\n\n"
+            f"Sandbox: {self.config.agent.sandbox_mode}\n"
             f"Choose mode:",
             reply_markup=keyboard
         )
@@ -196,7 +200,7 @@ class ClawCatBot:
         if data.startswith("model:"):
             # Model selection
             model = data.split(":")[1]
-            if model in AVAILABLE_MODELS:
+            if model in self.runner.available_models:
                 self.runner.current_model = model
                 desc = MODEL_DESCRIPTIONS.get(model, model)
                 model_id = MODEL_IDENTIFIERS.get(model, model)
@@ -214,11 +218,12 @@ class ClawCatBot:
 
             session = self.runner.create_session(dangerous_mode=dangerous)
 
-            mode_str = "DANGEROUS MODE" if dangerous else "normal mode"
+            mode_str = "FULL ACCESS" if dangerous else "normal safe mode"
             await query.edit_message_text(
                 f"New session created!\n\n"
                 f"Session ID: {session.id}\n"
-                f"Model: {session.model}\n"
+                f"Provider: {self.runner.provider_label}\n"
+                f"Model: {session.model_display}\n"
                 f"Mode: {mode_str}\n\n"
                 f"Send a message to start."
             )
@@ -269,7 +274,7 @@ class ClawCatBot:
             name = session.display_name
             await update.message.reply_text(
                 f"Session paused and saved: {name}\n"
-                f"Model: {session.model}\n"
+                f"Model: {session.model_display}\n"
                 f"Messages: {session.message_count}\n\n"
                 f"Use /listsessions to see saved sessions."
             )
@@ -296,7 +301,7 @@ class ClawCatBot:
         lines = ["Saved Sessions:", ""]
         for s in sessions[:10]:  # Limit to 10
             name = s.get("nickname") or s["id"]
-            model = s["model"]
+            model = s["model"] or "default"
             msgs = s["messages"]
             dangerous = " [DANGEROUS]" if s.get("dangerous_mode") else ""
             lines.append(f"  {name} ({model}, {msgs} msgs){dangerous}")
@@ -339,7 +344,8 @@ class ClawCatBot:
             await update.message.reply_text(
                 f"Session resumed: {name}\n"
                 f"Session ID: {session.id}\n"
-                f"Model: {session.model}\n"
+                f"Provider: {self.runner.provider_label}\n"
+                f"Model: {session.model_display}\n"
                 f"Messages: {session.message_count}\n"
                 f"Dangerous mode: {'ON' if session.dangerous_mode else 'OFF'}"
             )
@@ -347,20 +353,20 @@ class ClawCatBot:
             await update.message.reply_text("Failed to load session.")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle regular text messages as Claude instructions."""
+        """Handle regular text messages as local-agent instructions."""
         if not await self._check_auth(update):
             return
 
         instruction = update.message.text
 
         if not instruction or not instruction.strip():
-            await update.message.reply_text("Please send an instruction for Claude.")
+            await update.message.reply_text("Please send an instruction for the local agent.")
             return
 
         # Send "working" indicator with session info
         session = self.runner.active_session
         if session:
-            working_text = f"Working... [Session: {session.id}, Model: {session.model}]"
+            working_text = f"Working... [Session: {session.id}, Model: {session.model_display}]"
         else:
             working_text = f"Working... [New session, Model: {self.runner.current_model}]"
 
@@ -385,7 +391,7 @@ class ClawCatBot:
 
         Args:
             update: Telegram update.
-            result: RunResult from Claude execution.
+            result: RunResult from local-agent execution.
         """
         # Build response message
         parts = []

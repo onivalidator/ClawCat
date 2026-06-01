@@ -25,7 +25,7 @@ def main():
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    print("ClawCat - Telegram Remote Control for Claude Code")
+    print("ClawCat - Telegram Remote Control for Local Coding Agents")
     print("=" * 50)
 
     try:
@@ -37,20 +37,22 @@ def main():
 
         config = load_config(config_path)
         print("Configuration loaded successfully")
-        print(f"  Working directory: {config.claude.working_dir}")
-        print(f"  Model: {config.claude.model}")
-        print(f"  Timeout: {config.claude.timeout_seconds}s")
+        print(f"  Provider: {config.agent.provider}")
+        print(f"  Working directory: {config.agent.working_dir}")
+        print(f"  Model: {config.agent.model or 'default'}")
+        print(f"  Timeout: {config.agent.timeout_seconds}s")
+        print(f"  Sandbox: {config.agent.sandbox_mode}")
         print()
 
         # Create bot
         bot = ClawCatBot(config)
 
-        # Check Claude availability
+        # Check local agent availability
         if bot.runner.is_available():
-            print("Claude CLI: Available")
+            print(f"{bot.runner.provider_label} CLI: Available")
         else:
-            print("WARNING: Claude CLI not available!")
-            print(f"  Expected at: {config.claude.executable}")
+            print(f"WARNING: {bot.runner.provider_label} CLI not available!")
+            print(f"  Expected at: {config.agent.executable}")
 
         print()
         print("Starting bot... Press Ctrl+C to stop.")

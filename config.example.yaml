@@ -1,36 +1,54 @@
 # ClawCat Configuration
-# Copy this file to config.yaml and fill in your values
+# Copy this file to config.yaml and fill in your values.
 
 telegram:
-  # Get your bot token from @BotFather on Telegram
+  # Get your bot token from @BotFather on Telegram.
   bot_token: "YOUR_BOT_TOKEN_HERE"
 
-  # Your Telegram user ID (get it from @userinfobot)
-  # This is the ONLY user who can control the bot
+  # Your Telegram user ID from @userinfobot.
+  # This is the only Telegram user who can control the bot.
   authorized_user_id: 123456789
 
-claude:
-  # Path to Claude CLI executable
-  executable: "C:\\Users\\kevin\\.local\\bin\\claude.exe"
+agent:
+  # Codex is the default provider for the OpenAI-compatible public release.
+  # Legacy Claude CLI support is still available with provider: "claude".
+  provider: "codex"
 
-  # Working directory for Claude commands
-  working_dir: "C:\\Users\\kevin"
+  # Path to the local agent CLI. Use "codex" when it is already on PATH.
+  executable: "codex"
 
-  # Maximum time to wait for a command (in seconds)
+  # Working directory passed to the local agent.
+  # macOS example: "/Users/YOUR_USER/ClawCatWorkspace"
+  # Windows example: "C:\\Users\\YOUR_USER\\ClawCatWorkspace"
+  working_dir: "C:\\Users\\YOUR_USER\\ClawCatWorkspace"
+
+  # Maximum time to wait for a command.
   timeout_seconds: 300
 
-  # Claude model to use - aliases auto-map to latest versions
-  # Available models:
-  #   opus   - Opus 4.5 (claude-opus-4-5-20251101) - State-of-the-art, recommended
-  #   sonnet - Sonnet 4.5 (claude-sonnet-4-5-20250929) - Fast daily coding
-  #   haiku  - Haiku 4.5 (claude-haiku-4-5-20251001) - Fastest, simple tasks
-  model: "opus"
+  # Leave empty/null to use the Codex CLI default model from local config.
+  # You can also choose one of the configured models below.
+  model: null
+  models:
+    - "default"
+    - "gpt-5.1-codex"
+    - "gpt-5.1"
+    - "gpt-5"
 
-  # Open a monitor window on the desktop when a new session starts
-  # Set to false to disable (useful when running as a service)
-  open_monitor_window: true
+  # Safe defaults for remote operation.
+  # read-only prevents file writes; workspace-write allows edits only in the workspace.
+  sandbox_mode: "read-only"
 
-  # Show Claude CLI in a visible terminal window
-  # When enabled, each Claude command runs in a visible PowerShell window
-  # so you can see the work in progress (useful for remote monitoring via AnyDesk, etc.)
+  # Full-access mode is hidden unless this is explicitly true.
+  allow_dangerous_mode: false
+
+  # Set true only if you want a local activity monitor window.
+  open_monitor_window: false
+
+  # Reserved for providers that support visible terminal execution.
   visible_terminal: false
+
+  # Set true only if your workspace is intentionally not a git repository.
+  skip_git_repo_check: false
+
+# Legacy Claude configuration still works, but new public deployments should
+# use the `agent` section above.

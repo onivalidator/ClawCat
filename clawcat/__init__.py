@@ -1,3 +1,3 @@
-"""ClawCat - Telegram Remote Control for Claude Code."""
+"""ClawCat - Telegram remote control for local coding agents."""
 
 __version__ = "1.0.0"
