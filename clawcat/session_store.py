@@ -44,9 +44,7 @@ class SessionStore:
         Returns:
             True if saved successfully, False otherwise.
         """
-        agent_session_id = getattr(session, "agent_session_id", None) or getattr(
-            session, "agent_session_id", None
-        )
+        agent_session_id = getattr(session, "agent_session_id", None)
         if not agent_session_id:
             logger.warning("Cannot save session without agent_session_id")
             return False
@@ -56,7 +54,6 @@ class SessionStore:
             "model": session.model,
             "dangerous_mode": session.dangerous_mode,
             "message_count": session.message_count,
-            "agent_session_id": agent_session_id,
             "agent_session_id": agent_session_id,
             "nickname": session.nickname,
             "created_at": session.created_at or time.time(),
@@ -105,7 +102,7 @@ class SessionStore:
             try:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    saved_id = data.get("agent_session_id") or data.get("agent_session_id", "")
+                    saved_id = data.get("agent_session_id", "")
                     if saved_id.startswith(session_id):
                         return data
             except (json.JSONDecodeError, IOError):
@@ -126,7 +123,7 @@ class SessionStore:
                 with open(filepath, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
-                saved_id = data.get("agent_session_id") or data["agent_session_id"]
+                saved_id = data["agent_session_id"]
                 sessions.append({
                     "id": saved_id[:8],
                     "full_id": saved_id,

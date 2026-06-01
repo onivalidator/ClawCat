@@ -37,21 +37,12 @@ class AgentConfig:
     skip_git_repo_check: bool = False
 
 
-# Backwards-compatible alias for older imports/config language.
-AgentConfig = AgentConfig
-
-
 @dataclass
 class Config:
     """Main configuration container."""
 
     telegram: TelegramConfig
     agent: AgentConfig
-
-    @property
-    def codex(self) -> AgentConfig:
-        """Legacy accessor for older code paths."""
-        return self.agent
 
 
 def find_config_file() -> Path:
@@ -91,34 +82,19 @@ def _require_bool(raw: dict, key: str, default: bool, section: str) -> bool:
 
 
 def _load_agent_config(raw: dict) -> AgentConfig:
-    """Load agent config, accepting both new `agent` and legacy `codex` sections."""
-    agent_raw = raw.get("agent")
-    legacy_agent_raw = raw.get("codex")
-
-    if agent_raw and legacy_agent_raw:
-        raise ConfigError("Use either 'agent' or legacy 'codex' config, not both")
-
-    if agent_raw is None:
-        agent_raw = legacy_agent_raw or {}
-        default_provider = "codex" if legacy_agent_raw is not None else "codex"
-    else:
-        default_provider = "codex"
+    """Load Codex agent configuration."""
+    agent_raw = raw.get("agent") or {}
 
     if not isinstance(agent_raw, dict):
         raise ConfigError("'agent' section must be a YAML dictionary")
 
-    provider = str(agent_raw.get("provider", default_provider)).lower().strip()
-    if provider not in {"codex", "codex"}:
-        raise ConfigError("'agent.provider' must be either 'codex' or 'codex'")
+    provider = str(agent_raw.get("provider", "codex")).lower().strip()
+    if provider != "codex":
+        raise ConfigError("'agent.provider' must be 'codex'")
 
-    if provider == "codex":
-        default_executable = "codex"
-        default_model = None
-        default_models = ["default", "gpt-5.1-codex", "gpt-5.1", "gpt-5"]
-    else:
-        default_executable = "codex"
-        default_model = "gpt-5.1-codex"
-        default_models = ["gpt-5.1-codex", "gpt-5.1", "gpt-5"]
+    default_executable = "codex"
+    default_model = None
+    default_models = ["default", "gpt-5.1-codex", "gpt-5.1", "gpt-5"]
 
     executable = str(agent_raw.get("executable", default_executable))
     working_dir = str(agent_raw.get("working_dir", str(Path.home())))

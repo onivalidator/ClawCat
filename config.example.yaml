@@ -10,8 +10,7 @@ telegram:
   authorized_user_id: 123456789
 
 agent:
-  # Codex is the default provider for the OpenAI-compatible public release.
-  # Legacy Codex CLI support is still available with provider: "codex".
+  # Codex is the default provider.
   provider: "codex"
 
   # Path to the local agent CLI. Use "codex" when it is already on PATH.
@@ -49,6 +48,3 @@ agent:
 
   # Set true only if your workspace is intentionally not a git repository.
   skip_git_repo_check: false
-
-# Legacy Codex configuration still works, but new public deployments should
-# use the `agent` section above.

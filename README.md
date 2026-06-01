@@ -1,5 +1,7 @@
 # ClawCat
 
+![CI](https://github.com/onivalidator/ClawCat/actions/workflows/ci.yml/badge.svg)
+
 ClawCat is a single-user Telegram controller for local coding-agent CLIs. The
 public-ready path is centered on Codex/OpenAI-compatible workflows: a trusted
 user can send a task from Telegram, ClawCat runs the local Codex CLI in a
@@ -18,7 +20,6 @@ auditable instead of forwarding broad shell access to a hosted bot.
 
 - Telegram command surface for one authorized user
 - Codex CLI provider by default
-- Legacy Codex CLI provider for existing private installs
 - Read-only sandbox by default for remote tasks
 - Optional workspace-write mode for controlled edits
 - Full-access mode hidden unless explicitly enabled in config
@@ -173,19 +174,6 @@ For safety, ClawCat starts a fresh non-interactive Codex run for each Telegram
 task. The current `codex exec resume` path does not expose the same sandbox
 flags, so ClawCat does not use it for remote execution.
 
-### Codex Legacy Mode
-
-Existing private installs can still use:
-
-```yaml
-agent:
-  provider: "codex"
-  executable: "C:\\Users\\YOUR_USER\\.local\\bin\\codex"
-  model: "gpt-5.1"
-```
-
-New public deployments should prefer Codex.
-
 ## Running as a Windows Service
 
 Windows service mode is optional. Run as Administrator:
@@ -216,3 +204,10 @@ does nothing on non-Windows platforms.
 - Start with `read-only` sandboxing.
 - Add repository-specific operating notes before enabling `workspace-write`.
 - Do not enable full-access mode on a machine with broad personal credentials.
+
+## Project Docs
+
+- [Security policy](SECURITY.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Roadmap](docs/ROADMAP.md)
+- [MIT license](LICENSE)

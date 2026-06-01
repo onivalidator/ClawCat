@@ -25,9 +25,6 @@ MODEL_DESCRIPTIONS = {
     "gpt-5.1-codex": "GPT-5.1 Codex - coding-agent workflows",
     "gpt-5.1": "GPT-5.1 - general OpenAI reasoning",
     "gpt-5": "GPT-5 - general OpenAI reasoning",
-    "gpt-5.1-codex": "Codex Opus - high quality coding tasks",
-    "gpt-5.1": "Codex Sonnet - fast daily coding tasks",
-    "gpt-5": "Codex Haiku - fast lightweight tasks",
 }
 
 MODEL_IDENTIFIERS = {
@@ -35,9 +32,6 @@ MODEL_IDENTIFIERS = {
     "gpt-5.1-codex": "gpt-5.1-codex",
     "gpt-5.1": "gpt-5.1",
     "gpt-5": "gpt-5",
-    "gpt-5.1-codex": "Codex CLI alias: gpt-5.1-codex",
-    "gpt-5.1": "Codex CLI alias: gpt-5.1",
-    "gpt-5": "Codex CLI alias: gpt-5",
 }
 
 
@@ -112,7 +106,7 @@ class AgentRunner:
 
     @property
     def provider_label(self) -> str:
-        return "Codex" if self.config.provider == "codex" else "Codex"
+        return "Codex"
 
     @property
     def current_model(self) -> str:
@@ -304,30 +298,8 @@ class AgentRunner:
         cmd.append(instruction)
         return cmd
 
-    def _build_codex_command(self, instruction: str, session: Session) -> list[str]:
-        cmd = [
-            self.config.executable,
-            "-p",
-            "--output-format",
-            "json",
-        ]
-
-        if session.model:
-            cmd.extend(["--model", session.model])
-
-        if session.dangerous_mode:
-            cmd.append("--dangerously-skip-permissions")
-
-        if session.agent_session_id:
-            cmd.extend(["--resume", session.agent_session_id])
-
-        cmd.append(instruction)
-        return cmd
-
     def _build_command(self, instruction: str, session: Session, output_file: Path) -> list[str]:
-        if self.config.provider == "codex":
-            return self._build_codex_command(instruction, session, output_file)
-        return self._build_codex_command(instruction, session)
+        return self._build_codex_command(instruction, session, output_file)
 
     def _run_subprocess_sync(
         self,
@@ -455,16 +427,14 @@ class AgentRunner:
         output_file: Optional[Path],
         duration_seconds: float,
     ) -> RunResult:
-        if self.config.provider == "codex":
-            return self._parse_codex_output(
-                stdout,
-                stderr,
-                returncode,
-                session,
-                output_file,
-                duration_seconds,
-            )
-        return self._parse_codex_output(stdout, stderr, returncode, session, duration_seconds)
+        return self._parse_codex_output(
+            stdout,
+            stderr,
+            returncode,
+            session,
+            output_file,
+            duration_seconds,
+        )
 
     def _parse_codex_output(
         self,
@@ -527,61 +497,6 @@ class AgentRunner:
 
         return None
 
-    def _parse_codex_output(
-        self,
-        stdout: str,
-        stderr: str,
-        returncode: int,
-        session: Session,
-        duration_seconds: float,
-    ) -> RunResult:
-        try:
-            data = json.loads(stdout.lstrip("\ufeff").strip())
-            result_text = data.get("result", "")
-            cost = data.get("total_cost_usd")
-            duration_ms = data.get("duration_ms")
-            duration = duration_ms / 1000.0 if duration_ms else duration_seconds
-
-            cli_session_id = data.get("session_id")
-            if cli_session_id and not session.agent_session_id:
-                session.agent_session_id = cli_session_id
-                logger.info(">>> Captured Codex session ID: %s", cli_session_id)
-
-            is_error = data.get("is_error", False) or returncode != 0
-            if is_error:
-                return RunResult(
-                    status=RunStatus.ERROR,
-                    output=result_text,
-                    error=data.get("error") or stderr or f"Process exited with code {returncode}",
-                    cost_usd=cost,
-                    duration_seconds=duration,
-                    session_id=session.agent_session_id,
-                )
-
-            return RunResult(
-                status=RunStatus.SUCCESS,
-                output=result_text,
-                cost_usd=cost,
-                duration_seconds=duration,
-                session_id=session.agent_session_id,
-            )
-        except json.JSONDecodeError:
-            if returncode != 0:
-                return RunResult(
-                    status=RunStatus.ERROR,
-                    output=stdout,
-                    error=stderr or f"Process exited with code {returncode}",
-                    duration_seconds=duration_seconds,
-                    session_id=session.agent_session_id,
-                )
-
-            return RunResult(
-                status=RunStatus.SUCCESS,
-                output=stdout.strip(),
-                duration_seconds=duration_seconds,
-                session_id=session.agent_session_id,
-            )
-
     async def cancel(self) -> bool:
         """Cancel the currently running command."""
         if self._current_process is not None and self._is_running:
@@ -598,6 +513,4 @@ class AgentRunner:
         return False
 
 
-# Backwards-compatible names for older imports.
-AgentRunner = AgentRunner
-AVAILABLE_MODELS = ["default", "gpt-5.1-codex", "gpt-5.1", "gpt-5", "gpt-5.1-codex", "gpt-5.1", "gpt-5"]
+AVAILABLE_MODELS = ["default", "gpt-5.1-codex", "gpt-5.1", "gpt-5"]
